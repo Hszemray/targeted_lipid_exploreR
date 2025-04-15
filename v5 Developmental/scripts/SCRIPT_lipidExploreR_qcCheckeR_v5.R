@@ -71,8 +71,6 @@ if(length(rda_fileList)>0){
 master_list$project_details$user_name <- dlgInput("set user", master_list$project_details$user_name)$res
 #set project name
 master_list$project_details$project_name <- dlgInput("project", master_list$project_details$project_name)$res
-#set is version
-master_list$project_details$is_ver <- dlgInput("SIL internal standard version used (v1 = 6500,pre-2023, v2 = 6500, post-2023, v3 = 7500 (matched to v2), v4 = 7500 updated, 2025)", master_list$project_details$is_ver)$res
 #reset parent directory
 master_list$summary_tables$project_summary$value[which(master_list$summary_tables$project_summary$`Project detail` == "local directory")] <- skylineR_directory
 master_list$project_details$project_dir <- skylineR_directory
@@ -134,61 +132,53 @@ master_list$summary_tables$area_project_summary$value[which(master_list$summary_
 #prepare template/guides for concentration for calculation
 master_list$templates <- list()
 #if using sciex lipidizer internal standards
-if(master_list$project_details$is_ver == "v1"){
-  master_list$templates$SIL_guide <- read_csv(
+  master_list$templates$v1$SIL_guide <- read_csv(
     file = paste0(master_list$project_details$github_master_dir, 
                   "templates/LGW_lipid_mrm_template_v1.csv"),
     show_col_types = FALSE) %>%
     clean_names()
-  master_list$templates$conc_guide <- read_csv(
+  master_list$templates$v1$conc_guide <- read_csv(
     file = paste0(master_list$project_details$github_master_dir,
                   "templates/LGW_SIL_batch_103.csv"), 
     show_col_types = FALSE) %>% 
     clean_names()
-}
 
 #if using ultra splash mix (ANPC method v2)
-if(master_list$project_details$is_ver == "v2"){
-  master_list$templates$SIL_guide <- read_csv(
+  master_list$templates$v2$SIL_guide <- read_csv(
     file = paste0(master_list$project_details$github_master_dir, 
                   "templates/LGW_lipid_mrm_template_v2.csv"),
     show_col_types = FALSE) %>%
     clean_names()
-  master_list$templates$conc_guide <- read_csv(
+  master_list$templates$v2$conc_guide <- read_csv(
     file = paste0(master_list$project_details$github_master_dir, 
                   "templates/LGW_SIL_batch_Ultimate_2023-03-06.csv"), 
     show_col_types = FALSE) %>% 
     clean_names()
-}
 
-
-#if using ultra splash mix (ANPC method v4)
-if(master_list$project_details$is_ver == "v3"){
-  master_list$templates$SIL_guide <- read_csv(
+#if using ultra splash mix (ANPC method v3)
+  master_list$templates$v3$SIL_guide <- read_csv(
     file = paste0(master_list$project_details$github_master_dir, 
                   "templates/LGW_lipid_mrm_template_v3.csv"),
     show_col_types = FALSE) %>%
     clean_names()
-  master_list$templates$conc_guide <- read_csv(
+  master_list$templates$v3$conc_guide <- read_csv(
     file = paste0(master_list$project_details$github_master_dir, 
                   "templates/LGW_SIL_batch_Ultimate_2023-03-06.csv"), 
     show_col_types = FALSE) %>% 
     clean_names()
-}
 
-#if using ultra splash mix (ANPC method v4)
-if(master_list$project_details$is_ver == "v4"){
-  master_list$templates$SIL_guide <- read_csv(
+#ultra splash mix (ANPC method v4)
+
+  master_list$templates$v4$SIL_guide <- read_csv(
     file = paste0(master_list$project_details$github_master_dir, 
                   "templates/LGW_lipid_mrm_template_v4.csv"),
     show_col_types = FALSE) %>%
     clean_names()
-  master_list$templates$conc_guide <- read_csv(
+  master_list$templates$v4$conc_guide <- read_csv(
     file = paste0(master_list$project_details$github_master_dir, 
                   "templates/LGW_SIL_batch_Ultimate_2023-03-06.csv"), 
     show_col_types = FALSE) %>% 
     clean_names()
-}
 
 # . ------------------------------------------------------------------------------------------------------------------------------  
 
@@ -317,272 +307,55 @@ for(idx_batch in unique(tempAllSamples$sample_plate_id)){
     filter(sample_plate_id == idx_batch)
 }
 
-## NEW SECTION 1.4. missForest imputation (missing value imputation using random forest) and Within batch correction ----------
+## 1.4. impute missing values [min/2 imputation (missing assumed < LOD)] -----------------------------------------------------
+#Imputation of the all zero value and missing data 
+#Imputation is completed using x/2, where x is minimum intensity of that feature in the batch
 
-#missforest imputation on sorted data for anyh NA, NaN, Inf values.  Additionally all fields are +5000 to minimise loss of features prior to need to talk to luke. 
-
-### 1.4.a. Within batch correction ---------------------------------------------------------
-# Create data list
-FUNC_list <- list()
-FUNC_list$project_dir <- paste0(skylineR_directory, "/data/batch_correction")
-FUNC_list$master_data <- bind_rows(master_list$data$peakArea$sorted)
-
-# Define metadata columns
-metadata_columns <- c("sample_name", "sample_timestamp", "sample_type", "sample_run_index",
-                      "sample_batch", "sample_plate_id", "sample_plate_order", "sample_type_factor",
-                      "sample_type_factor_rev", "sample_data_source")
-
-# Initialize storage for corrected data (list to hold each batch)
-master_list$data$peakArea$within_batch_corrected <- list()
-
-# Calculate median of ltr across all plates
-
-# Split numeric and metadata
-subset_numeric <- FUNC_list$master_data %>%
-  dplyr::select(-all_of(metadata_columns))
-
-subset_annotation <- FUNC_list$master_data %>%
-  dplyr::select(all_of(metadata_columns))
-
-# Process LTRs with outlier removal
-LTR_DF <- FUNC_list$master_data %>%
-  filter(sample_type_factor == "ltr")
-
-if(nrow(LTR_DF) > 0) {
-  # Clean LTR data
-  LTR_DF_numeric <- LTR_DF %>%
-    dplyr::select(-all_of(metadata_columns)) %>%
-    mutate(across(everything(), ~ ifelse(
-      . > quantile(., 0.75, na.rm = TRUE) + 1.5*IQR(., na.rm = TRUE) |
-        . < quantile(., 0.25, na.rm = TRUE) - 1.5*IQR(., na.rm = TRUE),
-      median(., na.rm = TRUE), .
-    )))
-  
-  # Reattach metadata to cleaned numeric data
-  LTR_DF_cleaned <- bind_cols(
-    LTR_DF %>% dplyr::select(all_of(metadata_columns)),
-    LTR_DF_numeric
-  )
-  
-  # Calculate median of cleaned LTRs
-  LTR_Median <- LTR_DF_numeric %>%
-    summarise(across(where(is.numeric), median, na.rm = TRUE))
-}else{
-  print("No ltr detected")
+#impute function
+#add LGW impute function
+lgw_impute <- function(x){
+  map(.x = x, .f = ~ (min(.x[.x > 0], na.rm = TRUE))/2) %>%
+    #use replace_na to replace NAs with min/2 value
+    replace_na(
+      data = x %>% mutate_all(~ replace(., . == 0, NA)), #note - replace zeros with NA to make compatible with replace_na()
+      replace = .) #note - replace with list of min/2 values generated from map function in pipe (.)
 }
 
-
-# Run loop for each plate/batch
-for (idx_batch in names(master_list$data$peakArea$sorted)) {
-  
-  # Subset data by batch
-  dataframe_subset <- FUNC_list$master_data %>%
-    filter(sample_plate_id == idx_batch)
-  
-  # Split numeric and metadata
-  dataframe_subset_numeric <- dataframe_subset %>%
-    dplyr::select(-all_of(metadata_columns))
-  
-  subset_annotation <- dataframe_subset %>%
-    dplyr::select(all_of(metadata_columns))
-  
-  # Use global median calculated above
-  LTR_Median <- LTR_Median
-  
-  # Find positions of LTRs in original dataframe
-  LTR_positions <- which(dataframe_subset$sample_type_factor == "ltr")
-  
-  # Find nearest LTR for each sample
-  distances <- outer(1:nrow(dataframe_subset), LTR_positions,
-                     FUN = function(i, j) abs(i - j))
-  nearest_LTR_indices <- LTR_positions[apply(distances, 1, which.min)]
-  
-  # Create replication counts
-  replication_counts <- data.frame(table(nearest_LTR_indices))
-  replication_counts$nearest_LTR_indices <- as.numeric(levels(replication_counts$nearest_LTR_indices))[replication_counts$nearest_LTR_indices]
-  
-  # Create replicated LTR dataframe using CLEANED data
-  Combined_LTR_DF <- bind_rows(lapply(1:nrow(replication_counts), function(i) {
-    ltr_idx <- which(LTR_positions == replication_counts$nearest_LTR_indices[i])
-    LTR_DF_cleaned[ltr_idx, ] %>%
-      slice(rep(1, replication_counts$Freq[i]))
-  }))
-  
-  # Calculate correction factors
-  LTR_reference_numeric <- Combined_LTR_DF %>%
-    dplyr::select(-all_of(metadata_columns))
-  
-  LTR_Median_Replicated <- LTR_Median[rep(1, nrow(LTR_reference_numeric)), ]
-  difference_to_median <- LTR_reference_numeric - LTR_Median_Replicated
-  
-  # Apply correction
-  Corrected_Data_Numeric <- dataframe_subset_numeric - difference_to_median
-  Corrected_Data <- cbind(subset_annotation, Corrected_Data_Numeric)
-  
-  
-  colnames(Corrected_Data) <- gsub("\\..*", "", colnames(Corrected_Data))
-  Corrected_Data$sample_data_source <- ".peakAreaImputed"
-  Corrected_Data <- Corrected_Data %>%
-    mutate(across(-contains("sample"), as.numeric))
-  
-  rownames(Corrected_Data) <- NULL
-  
-  master_list$data$peakArea$within_batch_corrected[[idx_batch]] <- Corrected_Data
-  
-}
-
-# Clean up temporary objects
-rm(FUNC_list)
-
-###1.4.b. missForest imputation -----
-# Set random seed for reproducibility
-set.seed(123)
-
-# Create imputation list
+#set data list
 master_list$data$peakArea$imputed <- list()
-
-### FOR IMPUTATITON PER PLATE (Delete)
-# # Run loop for each plate
-# for (idx_batch in names(master_list$data$peakArea$sorted)) {
-#   
-#   # Prepare the imputation data (ensure it's a numeric data frame)
-#   impute_data <- master_list$data$peakArea$sorted[[idx_batch]] %>%
-#     dplyr::select(-contains("sample")) %>%
-#     as.data.frame()
-#   
-#   # Convert zeros, Inf, and NaN to NA for imputation
-#   impute_data[] <- lapply(impute_data, function(col) {
-#     if (is.numeric(col)) {
-#       col[col == 0 | is.infinite(col) | is.nan(col) | col < 5000] <- NA
-#     }
-#     return(col)
-#   })
-#   
-#   # Perform missForest imputation
-#   imputed <- missForest::missForest(impute_data,
-#                                     maxiter = 10,
-#                                     ntree = 100,
-#                                     verbose = TRUE)
-#   
-#   # Extract and combine imputed data with sample identifiers
-#   master_list$data$peakArea$imputed[[idx_batch]] <- imputed$ximp %>%
-#     as_tibble() %>%
-#     add_column(
-#       master_list$data$peakArea$sorted[[idx_batch]] %>%
-#         dplyr::select(contains("sample")),
-#       .before = 1
-#     )
-#   
-#   # Clean up feature names if needed
-#   colnames(master_list$data$peakArea$imputed[[idx_batch]]) <- gsub("\\..*", "", 
-#                                                                    colnames(master_list$data$peakArea$imputed[[idx_batch]]))
-#   
-#   # Tag data type
-#   master_list$data$peakArea$imputed[[idx_batch]]$sample_data_source <- ".peakAreaImputed"
-#   
-#   # Ensure numeric format for all features
-#   master_list$data$peakArea$imputed[[idx_batch]] <- master_list$data$peakArea$imputed[[idx_batch]] %>%
-#     mutate(across(-contains("sample"), as.numeric))
-# }
-
-#FOR IMPUTATION PER BATCH 
-
-# Prepare the imputation data (ensure it's a numeric data frame)
-Master_data <- do.call(rbind, master_list$data$peakArea$within_batch_corrected)
-Master_data <- as.data.frame(Master_data)
-
-
-impute_data <- Master_data %>%
-  dplyr::select(-contains("sample")) %>%
-  as.data.frame()
-
-# Convert zeros, Inf, and NaN to NA for imputation
-
-impute_data[] <- lapply(impute_data, function(col) {
-  if (is.numeric(col)) {
-    col[is.infinite(col) | is.nan(col) | col == 0] <- NA 
-  }
-  return(col)
-})
-
-
-#  columns with all NA values
-num_columns_with_all_na <- sum(sapply(impute_data, function(x) all(is.na(x))))
-
-cat("Number of columns with all NA values:", num_columns_with_all_na)
-
-
-
-
-# Check proportion of missing values before imputation
-missing_before <- (sum(is.na(impute_data)))
-print(paste("Proportion of missing values before imputation:", missing_before))
-
-# Perform missForest imputation
-imputed <- missForest::missForest(impute_data,
-                                  maxiter = 10,
-                                  ntree = 500,
-                                  verbose = TRUE)
-
-Master_data_imputed <- cbind(
-  Master_data %>% dplyr::select(contains("sample")),
-  imputed$ximp
-)
-
-# Check proportion of missing values after imputation
-missing_after <- (sum(is.na(Master_data_imputed)))
-print(paste("Proportion of missing values after imputation:", missing_after))
-
-
-# Clean up feature names if needed
-colnames(Master_data_imputed) <- gsub("\\..*", "", colnames(Master_data_imputed))
-
-# Tag data type
-Master_data_imputed$sample_data_source <- ".peakAreaImputed"
-
-# Ensure numeric format for all features
-Master_data_imputed <- Master_data_imputed %>%
-  mutate(across(-contains("sample"), as.numeric))
-
-# Separate back into plates and store in list
-
-master_list$data$peakArea$imputed <- list()
-
-for (idx_batch in Master_data_imputed$sample_plate_id){
-  datasubset <- Master_data_imputed %>% filter(sample_plate_id == idx_batch)
-  rownames(datasubset) <- NULL
-  master_list$data$peakArea$imputed[[idx_batch]] <- datasubset
+#run loop in all plates
+for(idx_batch in names(master_list$data$peakArea$sorted)){
+  #set all 0, NaN, is.infinate to a NA value for consistency
+  #create matrix 
+  master_list$data$peakArea$imputed[[idx_batch]]  <- master_list$data$peakArea$sorted[[idx_batch]] %>%
+    column_to_rownames("sample_name") %>%
+    select(-contains("sample")) %>%
+    as.matrix()
+  
+  #replace 0, NaN and Inf with NA for imputation (min/2)
+  master_list$data$peakArea$imputed[[idx_batch]][master_list$data$peakArea$imputed[[idx_batch]] ==0] <- NA
+  master_list$data$peakArea$imputed[[idx_batch]][is.infinite(master_list$data$peakArea$imputed[[idx_batch]])] <- NA
+  master_list$data$peakArea$imputed[[idx_batch]][is.nan(master_list$data$peakArea$imputed[[idx_batch]])] <- NA
+  
+  
+  #run lgw_impute function
+  master_list$data$peakArea$imputed[[idx_batch]] <- master_list$data$peakArea$imputed[[idx_batch]] %>% 
+    as.data.frame() %>%
+    lgw_impute() %>%
+    rownames_to_column("sample_name") %>%
+    as_tibble() %>%
+    #samples that are 100% missing (zero/na) have imputation error as min/2(x) is inf. So this step replaces inf with zeros (will be flagged for filter later anyway).
+    mutate_all(function(x) ifelse(is.infinite(x), 1, x)) %>%
+    left_join(
+      select(master_list$data$peakArea$sorted[[idx_batch]], contains("sample")),
+      .,
+      by = "sample_name"
+    )
+  
+  #tag data type
+  master_list$data$peakArea$imputed[[idx_batch]]$sample_data_source <- ".peakAreaImputed"
+  
 }
-
-
-
-# Ensure all batches contain the same variables
-common_cols <- Reduce(intersect, lapply(master_list[["data"]][["peakArea"]][["imputed"]], colnames))
-
-# Match columns across all batches dynamically for imputed
-master_list[["data"]][["peakArea"]][["imputed"]] <- lapply(
-  master_list[["data"]][["peakArea"]][["imputed"]],
-  function(batch) batch %>% dplyr::select(all_of(common_cols))
-)
-
-# Match templates to data
-common_cols <- Reduce(intersect, lapply(master_list[["data"]][["peakArea"]][["imputed"]], colnames))
-
-# Extract the relevant column from SIL_guide, e.g., precursor_name
-SIL <- master_list[["templates"]][["SIL_guide"]]$precursor_name
-
-# Find the intersection of common_cols and SIL
-common_cols <- intersect(common_cols, SIL)
-
-# Update SIL_guide's precursor_name to match common_cols
-#master_list[["templates"]][["SIL_guide"]] <- master_list[["templates"]][["SIL_guide"]] %>%
-# dplyr::filter(precursor_name %in% common_cols)
-
-
-master_list$data$peakArea$sorted <- master_list$data$peakArea$imputed
-
-master_list$data$peakArea$within_batch_corrected <- master_list$data$peakArea$imputed
-
 
 ## 1.5. statTarget signalDrift | batch correction ----------------------------
 
@@ -959,10 +732,41 @@ rm(list = c(ls()[which(ls() != "master_list")]))
 master_list$data$response <- list()
 master_list$data$concentration <- list()
 
+#store batches(plates)
+batches <- unique(names(master_list$data$peakArea$statTargetProcessed)) 
+
+#for loop for SIL template version control 
+for(idx_batch in batches){
+
+#set template version for SIL_guide and conc_guide 
+batch_timestamp <-  master_list$data$peakArea$statTargetProcessed[[idx_batch]][["sample_timestamp"]] %>% str_sub(.,1,4) %>% unique() %>% as.numeric()
+#logic for template selection
+template_version <- if(batch_timestamp < 2023){ 
+  "v1"
+} else if(batch_timestamp >= 2023 & batch_timestamp < 2025){
+  "v2"
+} else if(batch_timestamp >= 2025){
+  "v4"
+}
+
+#store project from plate (TO BE COMPLETED AT A LATER DATE)
+
+#Prompt user for SIL version and allow for override per plate
+master_list$project_details$is_ver <- dlgInput(paste0(
+  "Plate = ",idx_batch,
+  " based on the mzml timestamp of your project ", batch_timestamp,
+  " lipidExploreR suggestes you use SIL internal standard version ", template_version, 
+  ". Please select which version to use (v1 = 6500, pre-2023, v2 = 6500, post-2023, v3 = 7500 (matched to v2), v4 = 7500 updated, 2025)"
+), default = template_version)$res
+
+  template_version <- master_list$project_details$is_ver
+  
+  master_list[["templates"]][["Plate SIL version"]][[idx_batch]] <- template_version
+  
 #complete for both peakArea sorted and statTarget
 for (idx_dataType in c("sorted", "imputed", "statTargetProcessed")){
-
-#### 1.6.a. calculate peakResponse for sorted area and statTarget -----------
+  
+  #### 1.6.a. calculate peakResponse for sorted area and statTarget -----------
   master_list$data$response[[idx_dataType]] <- list()
   
   #for loop for each data plate
@@ -971,56 +775,57 @@ for (idx_dataType in c("sorted", "imputed", "statTargetProcessed")){
     master_list$data$response[[idx_dataType]][[idx_batch]] <- master_list$data$peakArea[[idx_dataType]][[idx_batch]] %>% select(contains("sample"))
     #set empty list to store output data for concentration
     master_list$data$concentration[[idx_dataType]][[idx_batch]] <- master_list$data$peakArea[[idx_dataType]][[idx_batch]] %>% select(contains("sample"))
+    
     #run loop for each SIL IS.
     for(idx_SIL in master_list$data$peakArea[[idx_dataType]][[idx_batch]] %>% 
         select(contains("SIL")) %>% 
         names()){
-      if(length(master_list$templates$SIL_guide$precursor_name[which(master_list$templates$SIL_guide$note == idx_SIL)])>0){
+      if(length(which(master_list$templates[[template_version]]$SIL_guide$note == idx_SIL)) > 0){
         #find which SIL is used from the template
         target_lipids <- select(master_list$data$peakArea[[idx_dataType]][[idx_batch]], 
                                 sample_name,
-                                any_of(master_list$templates$SIL_guide$precursor_name[which(master_list$templates$SIL_guide$note == idx_SIL)])) %>%
+                                any_of(master_list$templates[[template_version]]$SIL_guide$precursor_name[which(master_list$templates[[template_version]]$SIL_guide$note == idx_SIL)])) %>%
           column_to_rownames("sample_name")
-        if(ncol(target_lipids)>0){
+        if(ncol(target_lipids) > 0){
           #calculate response ratio
-          target_lipids_response <- as.matrix(target_lipids/master_list$data$peakArea[[idx_dataType]][[idx_batch]][[idx_SIL]])
-          #standardise data set to remove infinates and NAs
+          target_lipids_response <- as.matrix(target_lipids / master_list$data$peakArea[[idx_dataType]][[idx_batch]][[idx_SIL]])
+          #standardise data set to remove infinities and NAs
           target_lipids_response[is.na(target_lipids_response)] <- 0
           target_lipids_response[is.infinite(target_lipids_response)] <- 0
           #round and improve decimal places (2dp for >1; 3 sf for < 1)
-          target_lipids_response[target_lipids_response <1] <- signif(target_lipids_response[target_lipids_response <1], 2)
-          target_lipids_response[target_lipids_response >1] <- round(target_lipids_response[target_lipids_response >1], 2)
+          target_lipids_response[target_lipids_response < 1] <- signif(target_lipids_response[target_lipids_response < 1], 2)
+          target_lipids_response[target_lipids_response > 1] <- round(target_lipids_response[target_lipids_response > 1], 2)
           #rejoin and make master
           master_list$data$response[[idx_dataType]][[idx_batch]] <- left_join(by = "sample_name",
-            master_list$data$response[[idx_dataType]][[idx_batch]], 
-            as.data.frame(target_lipids_response) %>% 
-              rownames_to_column("sample_name")
+                                                                              master_list$data$response[[idx_dataType]][[idx_batch]], 
+                                                                              as.data.frame(target_lipids_response) %>% 
+                                                                                rownames_to_column("sample_name")
           )
         } #if ncol()
         
         ## 1.6.b. convert response to single point concentration factor ---------
         #Find the concentration factor of SIL
-        sil_conc_factor <- master_list$templates$conc_guide$concentration_factor[which(master_list$templates$conc_guide$sil_name == idx_SIL)]
+        sil_conc_factor <- master_list$templates[[template_version]]$conc_guide$concentration_factor[which(master_list$templates[[template_version]]$conc_guide$sil_name == idx_SIL)]
         if(length(sil_conc_factor) == 1){
           #select response data
           target_lipids <- master_list$data$response[[idx_dataType]][[idx_batch]] %>%
             select(sample_name,
-                   any_of(master_list$templates$SIL_guide$precursor_name[which(master_list$templates$SIL_guide$note == idx_SIL)])) %>%
+                   any_of(master_list$templates[[template_version]]$SIL_guide$precursor_name[which(master_list$templates[[template_version]]$SIL_guide$note == idx_SIL)])) %>%
             column_to_rownames("sample_name")
           #calculate concentration
-          target_lipids_concentration <- as.matrix(target_lipids*sil_conc_factor)
-          #standardise data set to remove infinates and NAs
+          target_lipids_concentration <- as.matrix(target_lipids * sil_conc_factor)
+          #standardise data set to remove infinities and NAs
           target_lipids_concentration[is.na(target_lipids_concentration)] <- 0
           target_lipids_concentration[is.infinite(target_lipids_concentration)] <- 0
           #round and improve decimal places (2dp for >1; 3 sf for < 1)
-          target_lipids_concentration[target_lipids_concentration <1] <- signif(target_lipids_concentration[target_lipids_concentration <1], 2)
-          target_lipids_concentration[target_lipids_concentration >1] <- round(target_lipids_concentration[target_lipids_concentration >1], 2)
+          target_lipids_concentration[target_lipids_concentration < 1] <- signif(target_lipids_concentration[target_lipids_concentration < 1], 2)
+          target_lipids_concentration[target_lipids_concentration > 1] <- round(target_lipids_concentration[target_lipids_concentration > 1], 2)
           #rejoin and make master
           master_list$data$concentration[[idx_dataType]][[idx_batch]] <- left_join(by = "sample_name",
                                                                                    master_list$data$concentration[[idx_dataType]][[idx_batch]], 
                                                                                    as.data.frame(target_lipids_concentration) %>% 
                                                                                      rownames_to_column("sample_name")
-                                                                                   )
+          )
         } #close if(length(sil_conc_factor) == 1)
       } #if length()
     } #idx_sil
@@ -1028,8 +833,10 @@ for (idx_dataType in c("sorted", "imputed", "statTargetProcessed")){
     master_list$data$concentration[[idx_dataType]][[idx_batch]]$sample_data_source <- paste0("concentration.", idx_dataType)
   } #idx_batch
 } #idx_dataType
+}#Sil version control
 
 rm(list = c(ls()[which(ls() != "master_list")]))
+
 
 
 # data is now prepared for data preProcessing
@@ -1352,7 +1159,15 @@ master_list$filters$lipid.missingValues <- tibble(
 
 #tag lipid if its sil.int.std failed
 master_list$filters$lipid.missingValues[["silFilter.flag.Lipid"]] <- 0
-master_list$filters$lipid.missingValues[["silFilter.flag.Lipid"]][which(master_list$filters$lipid.missingValues$lipid %in% filter(master_list$templates$SIL_guide, note %in% master_list$filters$failed_sil.intStds)[["precursor_name"]])] <- 1
+  # Loop for SIL template version control
+    # Store batches (plates)
+    batches <- unique(names(master_list$data$peakArea$statTargetProcessed))
+    for (idx_batch in batches) {
+      SIL_version <- master_list[["templates"]][["Plate SIL version"]][[idx_batch]]
+      matching_indices <- which(master_list$filters$lipid.missingValues$lipid %in% filter(master_list$templates[[SIL_version]]$SIL_guide, note %in% master_list$filters$failed_sil.intStds)[["precursor_name"]])
+      # Assign the value 1 to the silFilter.flag.Lipid column at the matching indices only if it hasn't been set already
+      master_list$filters$lipid.missingValues[["silFilter.flag.Lipid"]][matching_indices] <- ifelse(is.na(master_list$filters$lipid.missingValues[["silFilter.flag.Lipid"]][matching_indices]), 1, master_list$filters$lipid.missingValues[["silFilter.flag.Lipid"]][matching_indices])
+    }
 
 #loop for every batch
 for(idx_batch in names(master_list$data$peakArea$sorted)){
@@ -2010,16 +1825,17 @@ for(idx_pca in c("PC1", "PC2", "PC3")){
 }
 
 #### targetControlCharts ------------------
+SIL_ver <- master_list[["project_details"]][["is_ver"]]
 #setLists
 master_list$control_charts <- list()
-for(idx_metabolite in filter(master_list$templates$SIL_guide, control_chart == TRUE)[["precursor_name"]]){
+for(idx_metabolite in filter(master_list$templates[[SIL_ver]]$SIL_guide, control_chart == TRUE)[["precursor_name"]]){
   #extract SIL int.std
-  idx_sil <- filter(master_list$templates$SIL_guide, control_chart == TRUE)[["note"]][which(filter(master_list$templates$SIL_guide, control_chart == TRUE)[["precursor_name"]] == idx_metabolite)]
+  idx_sil <- filter(master_list$templates[[SIL_ver]]$SIL_guide, control_chart == TRUE)[["note"]][which(filter(master_list$templates[[SIL_ver]]$SIL_guide, control_chart == TRUE)[["precursor_name"]] == idx_metabolite)]
   #make plot
   master_list$control_charts[[idx_metabolite]] <- ggplotly(
     ggplot(
       data = bind_rows(
-        bind_rows(master_list$data$peakArea$imputed) %>% select(contains("sample"), any_of(idx_metabolite)) %>% #filter(!sample_name %in% master_list$filters$failed_samples) %>% 
+        bind_rows(master_list$data$peakArea$imputed) %>% select(contains("sample"), any_of(idx_metabolite)) %>% #filter(!sample_name %in% master_list$filters$failed_samples) %>%
           mutate(sample_data_source=".peakArea"),
         #add SIL data
         bind_rows(master_list$data$peakArea$imputed) %>% select(contains("sample"), any_of(idx_sil)) %>% #filter(!sample_name %in% master_list$filters$failed_samples) %>%
@@ -2046,11 +1862,11 @@ for(idx_metabolite in filter(master_list$templates$SIL_guide, control_chart == T
       ylab(paste0(idx_metabolite)) +
       guides(shape = "none", size = "none", color = "none", fill=guide_legend(title=paste0("sample_type"))) +
       geom_text(inherit.aes = FALSE, data = annotate_label, aes(x = sample_run_index,  y = value, label = sample_plate_id), col = "black") +
-      facet_wrap(facets = "sample_data_source", ncol = 1, scales = "free_y") 
+      facet_wrap(facets = "sample_data_source", ncol = 1, scales = "free_y")
   ) %>% layout(
     title = list(
       text = paste0(idx_metabolite, "; control chart; ", master_list$project_details$project_name),
-      y = 1.1, 
+      y = 1.1,
       x=0.05),
     margin = list(
       l = 10, r = 10, b=65, t=85),
