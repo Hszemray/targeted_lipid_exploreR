@@ -123,8 +123,8 @@ master_list$project_details$plateID <- "all"
 master_list$project_details$project_dir <- skylineR_directory
 
 #set version of lipidExploreR used
-master_list$project_details$lipidExploreR_version <- "4.0"
-master_list$project_details$qcCheckR_version <- "4.0"
+master_list$project_details$lipidExploreR_version <- "5.0"
+master_list$project_details$qcCheckR_version <- "5.0"
 master_list$summary_tables$project_summary$value[which(master_list$summary_tables$project_summary$`Project detail` == "lipidExploreR version")] <- "4.0"
 master_list$summary_tables$area_project_summary$value[which(master_list$summary_tables$area_project_summary$`Project detail` == "lipidExploreR version")] <- "4.0"
 
@@ -186,8 +186,18 @@ master_list$templates <- list()
 master_list$data$peakArea <- list()
 ## 1.1. move skyline data and nest under peakArea ------
 master_list$data$peakArea$skylineReport <- master_list$data$skyline_report
-#remove skyline report
-#master_list$data$skyline_report <- NULL
+
+  
+# ##Check data is of a singular matrix e.g. plasma or serum
+#   file_names <- data.frame(master_list[["data"]][["peakArea"]][["skylineReport"]][["file_name"]]) %>%
+#     rename(file = master_list...data......peakArea......skylineReport......file_name...)
+#   file_names <- file_names[!is.na(file_names$file),] %>% data.frame()
+#   file_boolean <-  grepl("_PLA_",file_names$.) %>% unique()
+# 
+#   condition <- if (length(file_boolean) > 1){
+#     print('The data contains both plasma and serum cohorts. QCcheckeR can only process a single matrix type.')
+#     FORCE_QUIT()
+#   }
 
 #set batches (plates)
 if(tempQCflag != "all"){
@@ -202,6 +212,9 @@ if(tempQCflag == "all"){
 }
 
 dlg_message(paste0("subfolders with plates for QC are: | ", paste0(master_list$project_details$mzml_plate_list, collapse = " | "), " | . . . . . if any are incorrect check and re-run script"), "ok")
+
+#set qc-type
+master_list$project_details$qc_type <- dlgInput("which qc type will be used? Default is vltr, if your cohort was run on lipid method v1 please select ltr", "vltr/ltr/pqc ")$res
 
 ## 1.2. transpose data to standard metabolomics structure (features in columns, samples in rows) ---------------------------------------
 master_list$data$peakArea$transposed <- list()
@@ -224,8 +237,9 @@ for(idx_batch in master_list$project_details$mzml_plate_list){
   master_list$data$peakArea$transposed[[idx_batch]][,-1] <-
     sapply(master_list$data$peakArea$transposed[[idx_batch]][,-1], 
            as.numeric) %>% 
-    as_tibble() 
+    as_tibble()
 }
+
 
 ## 1.3. Sort by run order and add annotation data ------------------------------- 
 #list for storing concentration data area_sorted by run order
@@ -244,8 +258,9 @@ for (idx_batch in names(master_list$data$peakArea$transposed)){
     add_column(sample_timestamp = temp_timestamp) %>%
     arrange(sample_timestamp)
   
+  
   #create metadata columns
-  master_list$project_details$run_orders[[idx_batch]]$sample_batch <- master_list$project_details$project_name # batch/project name
+  master_list$project_details$run_orders[[idx_batch]]$sample_batch <- sub("(_SER|_PLA).*", "", master_list$project_details$run_orders[[idx_batch]]$sample_name)# cohort name
   master_list$project_details$run_orders[[idx_batch]]$sample_plate_id <- idx_batch #plate_id
   master_list$project_details$run_orders[[idx_batch]]$sample_plate_order <- c(1:nrow(master_list$project_details$run_orders[[idx_batch]])) #sample_plate_order
   master_list$project_details$run_orders[[idx_batch]]$sample_type <- NA
@@ -292,6 +307,7 @@ for (idx_batch in names(master_list$data$peakArea$transposed)){
   master_list$data$peakArea$sorted[[idx_batch]] <- master_list$data$peakArea$sorted[[idx_batch]] %>%
     add_column(sample_data_source = ".peakArea",
                .after = "sample_type_factor_rev")
+
 }
 
 #add a global runorder based on mzML sample timestamp
@@ -305,6 +321,7 @@ master_list$data$peakArea$sorted <-list()
 for(idx_batch in unique(tempAllSamples$sample_plate_id)){
   master_list$data$peakArea$sorted[[idx_batch]] <- tempAllSamples %>%
     filter(sample_plate_id == idx_batch)
+ 
 }
 
 ## 1.4. impute missing values [min/2 imputation (missing assumed < LOD)] -----------------------------------------------------
@@ -354,7 +371,7 @@ for(idx_batch in names(master_list$data$peakArea$sorted)){
   
   #tag data type
   master_list$data$peakArea$imputed[[idx_batch]]$sample_data_source <- ".peakAreaImputed"
-  
+
 }
 
 ## 1.5. statTarget signalDrift | batch correction ----------------------------
@@ -386,7 +403,7 @@ if(!dir.exists(paste0(skylineR_directory, "/html_report"))){
 }
 
 #set qc-type
-master_list$project_details$statTarget_qc_type <- dlgInput("which qc type will be used for statTarget", "VLTR/LTR/PQC - default is VLTR")$res
+master_list$project_details$statTarget_qc_type <- dlgInput("which qc type will be used for statTarget? Default is vltr, if your cohort was run on lipid method v1 please select ltr", "vltr/ltr/pqc ")$res
 
 
 #create data list 
@@ -411,12 +428,13 @@ FUNC_list$master_data[["sample_type"]][which(tolower(FUNC_list$master_data[["sam
 
 #flag QCs that have failed because of mis-injection (very low signal (<10 % of median))
 temp.rowSums <- FUNC_list$master_data %>%
-  filter(sample_type_factor == "vltr") %>%
+  filter(sample_type == "qc") %>%
   select(!contains("sample")) %>%
+  select(!contains("SIL"))%>%
   rowSums()
 #find file names
 temp.qcFail <- (FUNC_list$master_data  %>%
-                  filter(sample_type_factor == "vltr") %>%
+                  filter(sample_type == "qc") %>%
                   .$sample_name)[which(temp.rowSums < median(temp.rowSums*0.1))]
 
 #reset failed QC injections to "sample" so is not included in statTarget algorithm
@@ -543,6 +561,7 @@ for(idx_batch_set in unique(FUNC_list$PhenoFile$template_sample_id$batch)){
   temp_batch <- temp_batch + 1
 }
 
+
 FUNC_list$PhenoFile$template_sample_id$batch <- FUNC_list$PhenoFile$template_sample_id$batch %>%
   as.numeric()
 
@@ -609,7 +628,7 @@ statTarget::shiftCor(samPeno = samPeno,
                      ntree = 500,
                      MLmethod = 'QCRFSC',
                      imputeM = "minHalf",
-                     plot = FALSE,
+                     plot = TRUE,
                      coCV = 10000
 )
 
@@ -622,7 +641,7 @@ FUNC_list$corrected_data$data <- read_csv(
 #different versions of r/statTarget appear to produce shift_all_cor in different orientations. Some have metabolites in columns some in rows. Unsure as to why, I did not find out which package inside statTarget was producing this outcome.
 #the next phase fixes this by performing a check as to the orientation of the csv
 
-#older packages (metab lites in rows)
+#older packages (metabolites in rows)
 if("sample1" %in% colnames(FUNC_list$corrected_data$data)){
   FUNC_list$corrected_data$data  <- FUNC_list$corrected_data$data  %>%
     filter(sample != "class") %>%
@@ -728,116 +747,160 @@ rm(list = c(ls()[which(ls() != "master_list")]))
 
 ## 1.6. calculate peakResponse and concentration values -------------
 
-#setlist
+# Initialise lists
 master_list$data$response <- list()
 master_list$data$concentration <- list()
 
-#store batches(plates)
-batches <- unique(names(master_list$data$peakArea$statTargetProcessed)) 
+# Store batches (plates)
+batches <- unique(names(master_list$data$peakArea$statTargetProcessed))
 
-#for loop for SIL template version control 
+# For loop for SIL template version control by plate
 for(idx_batch in batches){
-
-#set template version for SIL_guide and conc_guide 
-batch_timestamp <-  master_list$data$peakArea$statTargetProcessed[[idx_batch]][["sample_timestamp"]] %>% str_sub(.,1,4) %>% unique() %>% as.numeric()
-#logic for template selection
-template_version <- if(batch_timestamp < 2023){ 
-  "v1"
-} else if(batch_timestamp >= 2023 & batch_timestamp < 2025){
-  "v2"
-} else if(batch_timestamp >= 2025){
-  "v4"
-}
-
-#store project from plate (TO BE COMPLETED AT A LATER DATE)
-
-#Prompt user for SIL version and allow for override per plate
-master_list$project_details$is_ver <- dlgInput(paste0(
-  "Plate = ",idx_batch,
-  " based on the mzml timestamp of your project ", batch_timestamp,
-  " lipidExploreR suggestes you use SIL internal standard version ", template_version, 
-  ". Please select which version to use (v1 = 6500, pre-2023, v2 = 6500, post-2023, v3 = 7500 (matched to v2), v4 = 7500 updated, 2025)"
-), default = template_version)$res
-
-  template_version <- master_list$project_details$is_ver
   
+  # Set template version for SIL_guide and conc_guide
+  batch_timestamp <- master_list$data$peakArea$statTargetProcessed[[idx_batch]][["sample_timestamp"]] %>%
+    str_sub(., 1, 4) %>%
+    unique() %>%
+    as.numeric()
+  
+  # Secondary check on SIL naming conventions
+  internal_standard_df <- master_list$data$peakArea$statTargetProcessed[[idx_batch]][grepl("SIL", colnames(master_list$data$peakArea$statTargetProcessed[[idx_batch]]))]
+  
+  # Flagging Internal Standards
+  internal_standard_flag <- ifelse(grepl("Lipidyzer|SPLASH", colnames(internal_standard_df)), 0, 1)
+  
+  unique_flag <- unique(internal_standard_flag)
+  
+  # Determine Internal Standard Type
+  internal_standard_type <- if (length(unique_flag) == 1) {
+    unique_flag
+  } else {
+    flag_1 <- sum(internal_standard_flag == 1)
+    flag_0 <- sum(internal_standard_flag == 0)
+    if (flag_0 > flag_1) 0 else 1
+  }
+
+  
+  # Logic for template selection
+  template_version <- if(batch_timestamp < 2023 & internal_standard_type == 0){ 
+    "v1"
+  } else if(batch_timestamp >= 2023 & batch_timestamp < 2025 & internal_standard_type == 1){
+    "v2"
+  } else if(batch_timestamp >= 2025 & internal_standard_type == 1){
+    "v4"
+  }
+  
+  # Prompt user for SIL version and allow for override per plate
+  master_list$project_details$is_ver <- dlgInput(paste0(
+    "Plate = ", idx_batch,
+    " based on the mzml timestamp of your project ", batch_timestamp,
+    " lipidExploreR suggests you use SIL internal standard version ", template_version, 
+    ". Please select which version to use (v1 = 6500, pre-2023, v2 = 6500, post-2023, v3 = 7500 (matched to v2), v4 = 7500 updated, 2025)"
+  ), default = template_version)$res
+  
+  template_version <- master_list$project_details$is_ver
   master_list[["templates"]][["Plate SIL version"]][[idx_batch]] <- template_version
   
-#complete for both peakArea sorted and statTarget
-for (idx_dataType in c("sorted", "imputed", "statTargetProcessed")){
-  
-  #### 1.6.a. calculate peakResponse for sorted area and statTarget -----------
-  master_list$data$response[[idx_dataType]] <- list()
-  
-  #for loop for each data plate
-  for(idx_batch in names(master_list$data$peakArea[[idx_dataType]])){
-    #set empty list to store output data for response
-    master_list$data$response[[idx_dataType]][[idx_batch]] <- master_list$data$peakArea[[idx_dataType]][[idx_batch]] %>% select(contains("sample"))
-    #set empty list to store output data for concentration
-    master_list$data$concentration[[idx_dataType]][[idx_batch]] <- master_list$data$peakArea[[idx_dataType]][[idx_batch]] %>% select(contains("sample"))
+  # Complete for both peakArea sorted and statTarget
+  for (idx_dataType in c("sorted", "imputed", "statTargetProcessed")){
     
-    #run loop for each SIL IS.
-    for(idx_SIL in master_list$data$peakArea[[idx_dataType]][[idx_batch]] %>% 
-        select(contains("SIL")) %>% 
-        names()){
-      if(length(which(master_list$templates[[template_version]]$SIL_guide$note == idx_SIL)) > 0){
-        #find which SIL is used from the template
-        target_lipids <- select(master_list$data$peakArea[[idx_dataType]][[idx_batch]], 
-                                sample_name,
-                                any_of(master_list$templates[[template_version]]$SIL_guide$precursor_name[which(master_list$templates[[template_version]]$SIL_guide$note == idx_SIL)])) %>%
-          column_to_rownames("sample_name")
-        if(ncol(target_lipids) > 0){
-          #calculate response ratio
-          target_lipids_response <- as.matrix(target_lipids / master_list$data$peakArea[[idx_dataType]][[idx_batch]][[idx_SIL]])
-          #standardise data set to remove infinities and NAs
-          target_lipids_response[is.na(target_lipids_response)] <- 0
-          target_lipids_response[is.infinite(target_lipids_response)] <- 0
-          #round and improve decimal places (2dp for >1; 3 sf for < 1)
-          target_lipids_response[target_lipids_response < 1] <- signif(target_lipids_response[target_lipids_response < 1], 2)
-          target_lipids_response[target_lipids_response > 1] <- round(target_lipids_response[target_lipids_response > 1], 2)
-          #rejoin and make master
-          master_list$data$response[[idx_dataType]][[idx_batch]] <- left_join(by = "sample_name",
-                                                                              master_list$data$response[[idx_dataType]][[idx_batch]], 
-                                                                              as.data.frame(target_lipids_response) %>% 
-                                                                                rownames_to_column("sample_name")
-          )
-        } #if ncol()
-        
-        ## 1.6.b. convert response to single point concentration factor ---------
-        #Find the concentration factor of SIL
-        sil_conc_factor <- master_list$templates[[template_version]]$conc_guide$concentration_factor[which(master_list$templates[[template_version]]$conc_guide$sil_name == idx_SIL)]
-        if(length(sil_conc_factor) == 1){
-          #select response data
-          target_lipids <- master_list$data$response[[idx_dataType]][[idx_batch]] %>%
-            select(sample_name,
-                   any_of(master_list$templates[[template_version]]$SIL_guide$precursor_name[which(master_list$templates[[template_version]]$SIL_guide$note == idx_SIL)])) %>%
+      # Find common cols between data and template
+      SIL_filter <- intersect(
+        colnames(master_list$data$peakArea[[idx_dataType]][[idx_batch]] %>% select(contains("SIL"))),
+        master_list$templates[[template_version]]$SIL_guide$note
+      )
+      
+      # Select columns containing "SIL" that are in the SIL_filter
+      sil_cols <- master_list$data$peakArea[[idx_dataType]][[idx_batch]] %>%
+        select(all_of(SIL_filter))
+      
+      # Select columns that do not contain "SIL"
+      non_sil_cols <- master_list$data$peakArea[[idx_dataType]][[idx_batch]] %>%
+        select(-contains("SIL"))
+      
+      # Combine the two sets of columns
+      master_list$data$peakArea[[idx_dataType]][[idx_batch]] <- bind_cols(non_sil_cols, sil_cols)
+      
+      # Set empty list to store output data for response
+      master_list$data$response[[idx_dataType]][[idx_batch]] <- master_list$data$peakArea[[idx_dataType]][[idx_batch]] %>%
+        select(contains("sample"))
+      
+      # Set empty list to store output data for concentration
+      master_list$data$concentration[[idx_dataType]][[idx_batch]] <- master_list$data$peakArea[[idx_dataType]][[idx_batch]] %>%
+        select(contains("sample"))
+      
+      # Run loop for each SIL IS
+      for(idx_SIL in master_list$data$peakArea[[idx_dataType]][[idx_batch]] %>%
+          select(contains("SIL")) %>%
+          names()){
+        if(length(which(master_list$templates[[template_version]]$SIL_guide$note == idx_SIL)) > 0){
+          # Find which SIL is used from the template
+          target_lipids <- select(master_list$data$peakArea[[idx_dataType]][[idx_batch]], 
+                                  sample_name,
+                                  any_of(master_list$templates[[template_version]]$SIL_guide$precursor_name[which(master_list$templates[[template_version]]$SIL_guide$note == idx_SIL)])) %>%
             column_to_rownames("sample_name")
-          #calculate concentration
-          target_lipids_concentration <- as.matrix(target_lipids * sil_conc_factor)
-          #standardise data set to remove infinities and NAs
-          target_lipids_concentration[is.na(target_lipids_concentration)] <- 0
-          target_lipids_concentration[is.infinite(target_lipids_concentration)] <- 0
-          #round and improve decimal places (2dp for >1; 3 sf for < 1)
-          target_lipids_concentration[target_lipids_concentration < 1] <- signif(target_lipids_concentration[target_lipids_concentration < 1], 2)
-          target_lipids_concentration[target_lipids_concentration > 1] <- round(target_lipids_concentration[target_lipids_concentration > 1], 2)
-          #rejoin and make master
-          master_list$data$concentration[[idx_dataType]][[idx_batch]] <- left_join(by = "sample_name",
-                                                                                   master_list$data$concentration[[idx_dataType]][[idx_batch]], 
-                                                                                   as.data.frame(target_lipids_concentration) %>% 
-                                                                                     rownames_to_column("sample_name")
-          )
-        } #close if(length(sil_conc_factor) == 1)
-      } #if length()
-    } #idx_sil
-    master_list$data$response[[idx_dataType]][[idx_batch]]$sample_data_source <- paste0(".response.", idx_dataType)
-    master_list$data$concentration[[idx_dataType]][[idx_batch]]$sample_data_source <- paste0("concentration.", idx_dataType)
-  } #idx_batch
-} #idx_dataType
-}#Sil version control
+          
+          if(ncol(target_lipids) > 0){
+            # Calculate response ratio
+            target_lipids_response <- as.matrix(target_lipids / master_list$data$peakArea[[idx_dataType]][[idx_batch]][[idx_SIL]])
+            
+            # Standardise data set to remove infinities and NAs
+            target_lipids_response[is.na(target_lipids_response)] <- 0
+            target_lipids_response[is.infinite(target_lipids_response)] <- 0
+            
+            # Round and improve decimal places (2dp for >1; 3 sf for < 1)
+            target_lipids_response[target_lipids_response < 1] <- signif(target_lipids_response[target_lipids_response < 1], 2)
+            target_lipids_response[target_lipids_response > 1] <- round(target_lipids_response[target_lipids_response > 1], 2)
+            
+            # Rejoin and make master
+            master_list$data$response[[idx_dataType]][[idx_batch]] <- left_join(
+              by = "sample_name",
+              master_list$data$response[[idx_dataType]][[idx_batch]], 
+              as.data.frame(target_lipids_response) %>%
+                rownames_to_column("sample_name")
+            )
+          } # if ncol()
+          
+        ## 1.6.b. Convert response to single point concentration factor
+          # Find the concentration factor of SIL
+          sil_conc_factor <- master_list$templates[[template_version]]$conc_guide$concentration_factor[which(master_list$templates[[template_version]]$conc_guide$sil_name == idx_SIL)]
+          
+          if(length(sil_conc_factor) == 1){
+            # Select response data
+            target_lipids <- master_list$data$response[[idx_dataType]][[idx_batch]] %>%
+              select(sample_name,
+                     any_of(master_list$templates[[template_version]]$SIL_guide$precursor_name[which(master_list$templates[[template_version]]$SIL_guide$note == idx_SIL)])) %>%
+              column_to_rownames("sample_name")
+            
+            # Calculate concentration
+            target_lipids_concentration <- as.matrix(target_lipids * sil_conc_factor)
+            
+            # Standardise data set to remove infinities and NAs
+            target_lipids_concentration[is.na(target_lipids_concentration)] <- 0
+            target_lipids_concentration[is.infinite(target_lipids_concentration)] <- 0
+            
+            # Round and improve decimal places (2dp for >1; 3 sf for < 1)
+            target_lipids_concentration[target_lipids_concentration < 1] <- signif(target_lipids_concentration[target_lipids_concentration < 1], 2)
+            target_lipids_concentration[target_lipids_concentration > 1] <- round(target_lipids_concentration[target_lipids_concentration > 1], 2)
+            
+            # Rejoin and make master
+            master_list$data$concentration[[idx_dataType]][[idx_batch]] <- left_join(
+              by = "sample_name",
+              master_list$data$concentration[[idx_dataType]][[idx_batch]], 
+              as.data.frame(target_lipids_concentration) %>%
+                rownames_to_column("sample_name")
+            )
+          } # close if(length(sil_conc_factor) == 1)
+        } # if length()
+      } # idx_sil
+      
+      master_list$data$response[[idx_dataType]][[idx_batch]]$sample_data_source <- paste0(".response.", idx_dataType)
+      master_list$data$concentration[[idx_dataType]][[idx_batch]]$sample_data_source <- paste0("concentration.", idx_dataType)
+  } # idx_dataType
+} # SIL version control by plate
+
 
 rm(list = c(ls()[which(ls() != "master_list")]))
-
-
 
 # data is now prepared for data preProcessing
 
@@ -849,16 +912,17 @@ rm(list = c(ls()[which(ls() != "master_list")]))
 # Once failed samples have been identified - the filtering then identifies lipids that have >50% missing values
 # note: missing also refers to <limit of detection [<LOD]. This refers to instances of peak areas that are <5000 counts, as skyline will sometimes integrate noise giving a small value.
 
-master_list$project_details$qc_type <- dlgInput("qc type for preProcessing/filtering  [NOTE: use PQC if one is available. Otherwise use LTR]", "PQC/LTR")$res
-
+master_list$project_details$qc_type <- dlgInput("qc type for preProcessing/filtering  [NOTE: use pqc if one is available. Otherwise use ltr]", "pqc/ltr")$res
 
 master_list$filters <- list()
 
 ## 2.1. sample filter flags [missing value and summed signal] -------
 master_list$project_details$mv_sample_threshold <- dlgInput("set missing value threshold % for sample flagging. e.g. exclude sample if it has > x% missing lipids. 50 is default", "50")$res %>% as.numeric()
-master_list$filters$samples.missingValues <- list()
+#For loop generates sample filter flags by plate
+for (idx_batch in names(master_list$data$peakArea$sorted)){
+master_list$filters$samples.missingValues[[idx_batch]] <- list()
 # complete on raw uncorrected peakArea data
-master_list$filters$samples.missingValues <- master_list$data$peakArea$sorted %>%
+master_list$filters$samples.missingValues[[idx_batch]] <- master_list$data$peakArea$sorted[[idx_batch]] %>%
   bind_rows() %>%
   select(
     sample_run_index,
@@ -868,36 +932,38 @@ master_list$filters$samples.missingValues <- master_list$data$peakArea$sorted %>
     sample_type_factor
   )
 
+# Check the version of the plate
+template_version <- master_list$templates$`Plate SIL version`[[idx_batch]]
 #generate summed target lipid intensity
-master_list$filters$samples.missingValues[["summed.lipid.signal"]] <- bind_rows(master_list$data$peakArea$sorted) %>%
+master_list$filters$samples.missingValues[[idx_batch]][["summed.lipid.signal"]] <- bind_rows(master_list$data$peakArea$sorted[[idx_batch]]) %>%
   select(!contains("sample")) %>%
   select(!contains("SIL")) %>%
   rowSums(na.rm = TRUE)
 
 #generate summed SIL lipid intensity
-master_list$filters$samples.missingValues[["summed.SIL.Int.Std.signal"]] <- bind_rows(master_list$data$peakArea$sorted) %>%
+master_list$filters$samples.missingValues[[idx_batch]][["summed.SIL.Int.Std.signal"]] <- bind_rows(master_list$data$peakArea$sorted[[idx_batch]]) %>%
   select(contains("SIL")) %>%
   rowSums(na.rm = TRUE)
 
 #zero values [samples.target.lipids] (values with a peakArea of <5000 are considered <LOD and are noise)
-master_list$filters$samples.missingValues[["missing.lipid[<LOD.peakArea<5000]"]] <- rowSums(
-  x = (master_list$data$peakArea$sorted %>%
+master_list$filters$samples.missingValues[[idx_batch]][["missing.lipid[<LOD.peakArea<5000]"]] <- rowSums(
+  x = (master_list$data$peakArea$sorted[[idx_batch]] %>%
          bind_rows() %>%
          select(!contains("sample")) %>%
          select(!contains("SIL")) %>%
          as.matrix()) <5000, na.rm =T)
 
 #zero values [samples.SIL.Int.Stds]
-master_list$filters$samples.missingValues[["missing.SIL.Int.Std[<LOD.peakArea<5000]"]] <- rowSums(
-  x = (master_list$data$peakArea$sorted %>%
+master_list$filters$samples.missingValues[[idx_batch]][["missing.SIL.Int.Std[<LOD.peakArea<5000]"]] <- rowSums(
+  x = (master_list$data$peakArea$sorted[[idx_batch]] %>%
          bind_rows() %>%
          select(!contains("sample")) %>%
          select(contains("SIL")) %>%
          as.matrix()) <5000, na.rm =T)
 
 #na values [samples.target.lipids]
-master_list$filters$samples.missingValues[["naValues[lipidTarget]"]] <- rowSums(
-  x = (master_list$data$peakArea$sorted %>%
+master_list$filters$samples.missingValues[[idx_batch]][["naValues[lipidTarget]"]] <- rowSums(
+  x = (master_list$data$peakArea$sorted[[idx_batch]] %>%
          bind_rows() %>%
          select(!contains("sample")) %>%
          select(!contains("SIL")) %>%
@@ -905,8 +971,8 @@ master_list$filters$samples.missingValues[["naValues[lipidTarget]"]] <- rowSums(
          is.na()), na.rm =T)
 
 #na values [samples.SIL.Int.Stds]
-master_list$filters$samples.missingValues[["naValues[SIL.Int.Stds]"]] <- rowSums(
-  x = (master_list$data$peakArea$sorted %>%
+master_list$filters$samples.missingValues[[idx_batch]][["naValues[SIL.Int.Stds]"]] <- rowSums(
+  x = (master_list$data$peakArea$sorted[[idx_batch]] %>%
          bind_rows() %>%
          select(!contains("sample")) %>%
          select(contains("SIL")) %>%
@@ -914,8 +980,8 @@ master_list$filters$samples.missingValues[["naValues[SIL.Int.Stds]"]] <- rowSums
          is.na()), na.rm =T)
 
 #nan values [samples.target.lipids]
-master_list$filters$samples.missingValues[["nanValues[lipidTarget]"]] <- rowSums(
-  x = (master_list$data$peakArea$sorted %>%
+master_list$filters$samples.missingValues[[idx_batch]][["nanValues[lipidTarget]"]] <- rowSums(
+  x = (master_list$data$peakArea$sorted[[idx_batch]] %>%
          bind_rows() %>%
          select(!contains("sample")) %>%
          select(!contains("SIL")) %>%
@@ -923,8 +989,8 @@ master_list$filters$samples.missingValues[["nanValues[lipidTarget]"]] <- rowSums
          is.nan()), na.rm =T)
 
 #nan values [samples.SIL.Int.Stds]
-master_list$filters$samples.missingValues[["nanValues[SIL.Int.Stds]"]] <- rowSums(
-  x = (master_list$data$peakArea$sorted %>%
+master_list$filters$samples.missingValues[[idx_batch]][["nanValues[SIL.Int.Stds]"]] <- rowSums(
+  x = (master_list$data$peakArea$sorted[[idx_batch]] %>%
          bind_rows() %>%
          select(!contains("sample")) %>%
          select(contains("SIL")) %>%
@@ -932,8 +998,8 @@ master_list$filters$samples.missingValues[["nanValues[SIL.Int.Stds]"]] <- rowSum
          is.nan()), na.rm =T)
 
 #inf values [samples.target.lipids]
-master_list$filters$samples.missingValues[["infValues[lipidTarget]"]] <- rowSums(
-  x = (master_list$data$peakArea$sorted %>%
+master_list$filters$samples.missingValues[[idx_batch]][["infValues[lipidTarget]"]] <- rowSums(
+  x = (master_list$data$peakArea$sorted[[idx_batch]] %>%
          bind_rows() %>%
          select(!contains("sample")) %>%
          select(!contains("SIL")) %>%
@@ -941,8 +1007,8 @@ master_list$filters$samples.missingValues[["infValues[lipidTarget]"]] <- rowSums
          is.infinite()), na.rm =T)
 
 #inf values [samples.SIL.Int.Stds]
-master_list$filters$samples.missingValues[["infValues[SIL.Int.Stds]"]] <- rowSums(
-  x = (master_list$data$peakArea$sorted %>%
+master_list$filters$samples.missingValues[[idx_batch]][["infValues[SIL.Int.Stds]"]] <- rowSums(
+  x = (master_list$data$peakArea$sorted[[idx_batch]] %>%
          bind_rows() %>%
          select(!contains("sample")) %>%
          select(contains("SIL")) %>%
@@ -950,7 +1016,7 @@ master_list$filters$samples.missingValues[["infValues[SIL.Int.Stds]"]] <- rowSum
          is.infinite()), na.rm =T)
 
 #total missing values [samples.target.lipids]
-master_list$filters$samples.missingValues[["totalMissingValues[lipidTarget]"]] <- master_list$filters$samples.missingValues %>%
+master_list$filters$samples.missingValues[[idx_batch]][["totalMissingValues[lipidTarget]"]] <- master_list$filters$samples.missingValues[[idx_batch]] %>%
   select(-contains("sample_")) %>%
   select(-contains("SIL")) %>%
   select(-contains("summed")) %>%
@@ -958,7 +1024,7 @@ master_list$filters$samples.missingValues[["totalMissingValues[lipidTarget]"]] <
   rowSums()
 
 #total missing values[samples.SIL.Int.stds]
-master_list$filters$samples.missingValues[["totalMissingValues[SIL.Int.Stds]"]] <- master_list$filters$samples.missingValues %>%
+master_list$filters$samples.missingValues[[idx_batch]][["totalMissingValues[SIL.Int.Stds]"]] <- master_list$filters$samples.missingValues[[idx_batch]] %>%
   select(-contains("sample_")) %>%
   select(contains("SIL")) %>%
   select(-contains("summed")) %>%
@@ -967,321 +1033,294 @@ master_list$filters$samples.missingValues[["totalMissingValues[SIL.Int.Stds]"]] 
 
 
 #sample flag?
-master_list$filters$samples.missingValues$sample.lipid.intensity.flag <- 0
+master_list$filters$samples.missingValues[[idx_batch]]$sample.lipid.intensity.flag <- 0
 #flag samples with a summed target intensity of <20% of median indicating an outlier low signal from prep or sample. e.g. sample has not been added to well correctly.
-master_list$filters$samples.missingValues$sample.lipid.intensity.flag[
-which(master_list$filters$samples.missingValues$summed.lipid.signal < (median(master_list$filters$samples.missingValues$summed.lipid.signal)*0.20))
+master_list$filters$samples.missingValues[[idx_batch]]$sample.lipid.intensity.flag[
+which(master_list$filters$samples.missingValues[[idx_batch]]$summed.lipid.signal < (median(master_list$filters$samples.missingValues[[idx_batch]]$summed.lipid.signal)*0.20))
 ] <- 1
 
 #low SIL.Int.Std flag indicating incorrect addition of internal standards
-master_list$filters$samples.missingValues$sample.SIL.Int.Std.intensity.flag <- 0
+master_list$filters$samples.missingValues[[idx_batch]]$sample.SIL.Int.Std.intensity.flag <- 0
 #flag samples with a summed SIL.Int.Std intensity of <33% of median indicating an outlier low signal from prep or sample. e.g. SIL have not been added correctly.
 #more stringent for IS as IS should be more consistent across the analysis
-master_list$filters$samples.missingValues$sample.SIL.Int.Std.intensity.flag[
-  which(master_list$filters$samples.missingValues$summed.SIL.Int.Std.signal < (median(master_list$filters$samples.missingValues$summed.SIL.Int.Std.signal)*0.33))
+master_list$filters$samples.missingValues[[idx_batch]]$sample.SIL.Int.Std.intensity.flag[
+  which(master_list$filters$samples.missingValues[[idx_batch]]$summed.SIL.Int.Std.signal < (median(master_list$filters$samples.missingValues[[idx_batch]]$summed.SIL.Int.Std.signal)*0.33))
 ] <- 1
 
 #missing value flag
-master_list$filters$samples.missingValues$sample.missing.value.flag <- 0
+master_list$filters$samples.missingValues[[idx_batch]]$sample.missing.value.flag <- 0
 #remove where missing data >mv_sample_threshold [default = 50%] total lipidTargets
-master_list$filters$samples.missingValues$sample.missing.value.flag[which(
-  master_list$filters$samples.missingValues$`totalMissingValues[lipidTarget]` > ((
-    bind_rows(master_list$data$peakArea$sorted) %>%
+master_list$filters$samples.missingValues[[idx_batch]]$sample.missing.value.flag[which(
+  master_list$filters$samples.missingValues[[idx_batch]]$`totalMissingValues[lipidTarget]` > ((
+    bind_rows(master_list$data$peakArea$sorted[[idx_batch]]) %>%
       select(-contains("sample")) %>%
       select(-contains("SIL")) %>%
       ncol())*(master_list$project_details$mv_sample_threshold/100))
 )] <- 1
 
 #remove where missing (<LOD) data > 33% total SIL.int.Stds (all IS should always be present so more stringent filter)
-master_list$filters$samples.missingValues$sample.missing.value.flag[which(
-  master_list$filters$samples.missingValues$`totalMissingValues[SIL.Int.Stds]` > ((bind_rows(
-    master_list$data$peakArea$sorted) %>%
+master_list$filters$samples.missingValues[[idx_batch]]$sample.missing.value.flag[which(
+  master_list$filters$samples.missingValues[[idx_batch]]$`totalMissingValues[SIL.Int.Stds]` > ((bind_rows(
+    master_list$data$peakArea$sorted[[idx_batch]]) %>%
       select(-contains("sample")) %>%
       select(contains("SIL")) %>%
       ncol())*(0.33))
 )] <- 1
 
 #create a overall sample flag
-master_list$filters$samples.missingValues$sample.flag <- 0
-master_list$filters$samples.missingValues$sample.flag[
+master_list$filters$samples.missingValues[[idx_batch]]$sample.flag <- 0
+master_list$filters$samples.missingValues[[idx_batch]]$sample.flag[
   which(
-    (master_list$filters$samples.missingValues %>% 
+    (master_list$filters$samples.missingValues[[idx_batch]] %>% 
        select(contains("flag")) %>% rowSums(na.rm = T)) > 0
   )
 ] <- 1
 
 #create failed sample list
-master_list$filters$failed_samples <- filter(master_list$filters$samples.missingValues, sample.flag==1)[["sample_name"]]
+master_list$filters$failed_samples[[idx_batch]] <- filter(master_list$filters$samples.missingValues[[idx_batch]], sample.flag==1)[["sample_name"]]
+}
 
+#Combine samples.missing values from plates 
+combined_missing_values <- do.call(rbind, master_list$filters$samples.missingValues)
+master_list$filters$samples.missingValues <- combined_missing_values
+#Combine failed samples
+combined_failed_samples <- do.call(rbind, master_list$filters$failed_samples)
+master_list$filters$failed_samples <- combined_failed_samples
+rm(combined_missing_values,combined_failed_samples)
 
 ## 2.2. sil.IntStd filter [missing value] -----
-#create SIL list
-master_list$filters$sil.intStd.missingValues <- tibble(
-  lipid = master_list$data$peakArea$sorted  %>%
-    bind_rows() %>%
-    select(contains("SIL")) %>%
-    names())
+master_list$filters$sil.intStd.missingValues <- list()
+# Initialise allplates as an empty data frame with the desired column names
+master_list$filters$sil.intStd.missingValues$allPlates.totalMissingValues <- data.frame(
+  lipid = character(),
+  template_version = character(),
+  plateID = character(),
+  peakArea_5000_LOD = numeric(),
+  naValues = numeric(),
+  nanValues = numeric(),
+  infValues = numeric(),
+  totalMissingValues = numeric(),
+  flag_SIL_intStd_Plate = numeric(),
+  stringsAsFactors = FALSE
+)
 
-#loop for every batch
+# Loop for every batch
 for(idx_batch in names(master_list$data$peakArea$sorted)){
+  # Create SIL list
+  master_list$filters$sil.intStd.missingValues[[idx_batch]] <- tibble(
+    lipid = master_list$data$peakArea$sorted[[idx_batch]] %>%
+      bind_rows() %>%
+      select(contains("SIL")) %>%
+      names()
+  )
   
-  master_list$filters$sil.intStd.missingValues[[paste0(idx_batch,".peakArea<5000[LOD]")]] <- colSums(
-    x= (master_list$data$peakArea$sorted[[idx_batch]] %>%
-          #only check samples that passed mv filter in previous step
-          filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag==0)[["sample_name"]]) %>%
-          select(contains("SIL")) %>%
-          as.matrix()) <5000, 
-    na.rm = T)
+  master_list$filters$sil.intStd.missingValues[[idx_batch]][["peakArea<5000[LOD]"]] <- colSums(
+    x = (master_list$data$peakArea$sorted[[idx_batch]] %>%
+           filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag == 0)[["sample_name"]]) %>%
+           select(contains("SIL")) %>%
+           as.matrix()) < 5000, 
+    na.rm = TRUE
+  )
   
-  #na values
-  master_list$filters$sil.intStd.missingValues[[paste0(idx_batch,".naValues")]] <- colSums(
-    x= (master_list$data$peakArea$sorted[[idx_batch]] %>%
-          #only check samples that passed mv filter in previous step
-          filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag==0)[["sample_name"]]) %>%
-          select(contains("SIL")) %>%
-          as.matrix()) %>%
-      is.na(), na.rm = T)
+  master_list$filters$sil.intStd.missingValues[[idx_batch]][["naValues"]] <- colSums(
+    x = (master_list$data$peakArea$sorted[[idx_batch]] %>%
+           filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag == 0)[["sample_name"]]) %>%
+           select(contains("SIL")) %>%
+           as.matrix()) %>%
+      is.na(), na.rm = TRUE
+  )
   
-  #nan values
-  master_list$filters$sil.intStd.missingValues[[paste0(idx_batch,".nanValues")]] <- colSums(
-    x= (master_list$data$peakArea$sorted[[idx_batch]] %>%
-          #only check samples that passed mv filter in previous step
-          filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag==0)[["sample_name"]]) %>%
-          select(contains("SIL")) %>%
-          as.matrix()) %>%
-      is.nan(), na.rm = T)
+  master_list$filters$sil.intStd.missingValues[[idx_batch]][["nanValues"]] <- colSums(
+    x = (master_list$data$peakArea$sorted[[idx_batch]] %>%
+           filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag == 0)[["sample_name"]]) %>%
+           select(contains("SIL")) %>%
+           as.matrix()) %>%
+      is.nan(), na.rm = TRUE
+  )
   
-  #inf values
-  master_list$filters$sil.intStd.missingValues[[paste0(idx_batch,".infValues")]] <- colSums(
-    x= (master_list$data$peakArea$sorted[[idx_batch]] %>%
-          #only check samples that passed mv filter in previous step
-          filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag==0)[["sample_name"]]) %>%
-          select(contains("SIL")) %>%
-          as.matrix()) %>%
-      is.infinite(), na.rm = T)
+  master_list$filters$sil.intStd.missingValues[[idx_batch]][["infValues"]] <- colSums(
+    x = (master_list$data$peakArea$sorted[[idx_batch]] %>%
+           filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag == 0)[["sample_name"]]) %>%
+           select(contains("SIL")) %>%
+           as.matrix()) %>%
+      is.infinite(), na.rm = TRUE
+  )
   
-  #total missing values for plate
-  master_list$filters$sil.intStd.missingValues[[paste0(idx_batch,".totalMissingValues")]] <-  rowSums(x= (master_list$filters$sil.intStd.missingValues %>%
-                                                                                                  select(contains(idx_batch))%>%
-                                                                                                  as.matrix()),
-                                                                                            na.rm = T)
-  # #Keep SIL intStd if has <5% missing values
-  master_list$filters$sil.intStd.missingValues[[paste0(idx_batch, ".flag.SIL.intStd[Plate]")]] <- 0
-  master_list$filters$sil.intStd.missingValues[[paste0(idx_batch, ".flag.SIL.intStd[Plate]")]][
-    which(master_list$filters$sil.intStd.missingValues[[paste0(idx_batch,".totalMissingValues")]] > 
+  master_list$filters$sil.intStd.missingValues[[idx_batch]][["totalMissingValues"]] <- rowSums(
+    x = (master_list$filters$sil.intStd.missingValues[[idx_batch]] %>%
+           select(contains(idx_batch)) %>%
+           as.matrix()),
+    na.rm = TRUE
+  )
+  
+  master_list$filters$sil.intStd.missingValues[[idx_batch]][["flag.SIL.intStd[Plate]"]] <- 0
+  master_list$filters$sil.intStd.missingValues[[idx_batch]][["flag.SIL.intStd[Plate]"]][
+    which(master_list$filters$sil.intStd.missingValues[[idx_batch]][["totalMissingValues"]] > 
             ((master_list$data$peakArea$sorted[[idx_batch]] %>%
-                #only check samples that passed mv filter in previous step
-                filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag==0)[["sample_name"]]) %>%
+                filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag == 0)[["sample_name"]]) %>%
                 nrow) * 0.05)
-  )] <- 1
+    )] <- 1
   
-  # which(
-  #   master_list$filters$sil.intStd.missingValues$allPlates.totalMissingValues > 
-  #     ((master_list$data$peakArea$sorted %>%
-  #         bind_rows() %>%
-  #         #only check samples that passed mv filter in previous step
-  #         filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag==0)[["sample_name"]]) %>%
-  #         nrow)*0.05)
-  # )] <- 1
+  
+  # Check the version of the plate and add to SIL list
+  template_version <- master_list$templates$`Plate SIL version`[[idx_batch]]
+  master_list$filters$sil.intStd.missingValues[[idx_batch]][["template_version"]] <- template_version
+  
+  #Add plateID 
+  master_list$filters$sil.intStd.missingValues[[idx_batch]][["plateID"]] <- idx_batch
+  
+  # Bind results
+  master_list$filters$sil.intStd.missingValues$allPlates.totalMissingValues <- rbind(
+    master_list$filters$sil.intStd.missingValues$allPlates.totalMissingValues, 
+    master_list$filters$sil.intStd.missingValues[[idx_batch]]
+  )
 }
 
-#for all plates
-master_list$filters$sil.intStd.missingValues[[paste0("allPlates.peakArea<5000[LOD]")]] <- colSums(
-  x= (master_list$data$peakArea$sorted %>%
-        bind_rows() %>%
-        #only check samples that passed mv filter in previous step
-        filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag==0)[["sample_name"]]) %>%
-        select(contains("SIL")) %>%
-        as.matrix()) <5000, na.rm = T)
+# Does SIL.int.std fail across all plates?
+# Initialise an empty list to store results
+results_list <- list()
 
-#na values
-master_list$filters$sil.intStd.missingValues[[paste0("allPlates.naValues")]] <- colSums(
-  x= (master_list$data$peakArea$sorted %>%
-         bind_rows() %>%
-         #only check samples that passed mv filter in previous step
-         filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag==0)[["sample_name"]]) %>%
-         select(contains("SIL")) %>%
-         as.matrix()) %>%
-    is.na(), 
-  na.rm = T)
+# For loop to handle each lipid method version
+for (version in unique(master_list$filters$sil.intStd.missingValues$allPlates.totalMissingValues$template_version)) {
+  
+  # Filter data for the current version
+  data <- master_list$filters$sil.intStd.missingValues$allPlates.totalMissingValues %>% 
+    filter(template_version == version)
+  
+  # Gather index of plates from the current version
+  plate_idx <- data %>%
+    distinct(plateID)
+  
+  # Calculate the number of samples that passed the mv filter
+  samples_data <- master_list$data$peakArea$sorted %>%
+    bind_rows() %>%  # Ensure the data is in a data frame format
+    filter(sample_plate_id %in% plate_idx$plateID) %>%
+    filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag == 0)[["sample_name"]]) %>%
+    nrow()
+  
+  # Add a flag if SIL IS is missing in > 5% of samples
+  flag <- ifelse(data$totalMissingValues > (samples_data * 0.05), 1, 0)
+  
+  # Store the results in the list
+  results_list[[version]] <- list(
+    version = version,
+    plate_idx = plate_idx,
+    samples_data = samples_data,
+    flag = flag
+  )
+}
 
-#nan values
-master_list$filters$sil.intStd.missingValues[[paste0("allPlates.nanValues")]] <- colSums(
-  x=  (master_list$data$peakArea$sorted %>%
-         bind_rows() %>%
-         #only check samples that passed mv filter in previous step
-         filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag==0)[["sample_name"]]) %>%
-         select(contains("SIL")) %>%
-        as.matrix()) %>%
-    is.nan(), na.rm = T)
+# Create a failed internal standard list
+failed_sil_intStds <- lapply(results_list, function(res) {
+  if (any(res$flag == 1)) {
+    return(master_list$filters$sil.intStd.missingValues$allPlates.totalMissingValues %>%
+             filter(template_version == res$version) %>%
+             select(lipid))
+  }
+  return(NULL)
+}) %>% bind_rows()
 
-#inf values
-master_list$filters$sil.intStd.missingValues[[paste0("allPlates.infValues")]] <- colSums(
-  x=  (master_list$data$peakArea$sorted %>%
-         bind_rows() %>%
-         #only check samples that passed mv filter in previous step
-         filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag==0)[["sample_name"]]) %>%
-         select(contains("SIL")) %>%
-        as.matrix()) %>%
-    is.infinite(), na.rm = T)
 
-#total missing values for plate
-master_list$filters$sil.intStd.missingValues[["allPlates.totalMissingValues"]] <- rowSums(x= (master_list$filters$sil.intStd.missingValues %>%
-                                                                                                        select(contains("allPlates"))%>%
-                                                                                                        as.matrix()),
-                                                                                                  na.rm = T)
+# convert to tibble object
+master_list[["filters"]][["sil.intStd.missingValues"]] <- lapply(master_list[["filters"]][["sil.intStd.missingValues"]], as_tibble)
 
-#does SIL.int.std fail across all plates?
-# add fail.filter column if lipid failed for a plate or for all plates 
-master_list$filters$sil.intStd.missingValues[["PROJECT.flag.SIL.intStd"]] <- 0
 
-#add a flag if SIL IS is missing in > 5% of samples
-master_list$filters$sil.intStd.missingValues[["PROJECT.flag.SIL.intStd"]][
-  which(
-    master_list$filters$sil.intStd.missingValues$allPlates.totalMissingValues > 
-      ((master_list$data$peakArea$sorted %>%
-         bind_rows() %>%
-         #only check samples that passed mv filter in previous step
-         filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag==0)[["sample_name"]]) %>%
-         nrow)*0.05)
-    )] <- 1
-
-#create a failed internal standard list
-master_list$filters$failed_sil.intStds <- filter(master_list$filters$sil.intStd.missingValues, PROJECT.flag.SIL.intStd == 1)[["lipid"]]
+# Assign the failed internal standard list to master_list
+master_list$filters$failed_sil.intStds <- failed_sil_intStds
 
 ## 2.3. lipid filter [missing value] --------
-#create SIL list
-master_list$filters$lipid.missingValues <- tibble(
-  lipid = master_list$data$peakArea$sorted  %>%
-    bind_rows() %>%
+lipid_results <- list()
+
+# Store batches (plates)
+batches <- unique(names(master_list$data$peakArea$sorted))
+
+for (idx_batch in batches) {
+  # Create lipid list for the current batch
+  lipid_list <- tibble(
+    lipid = master_list$data$peakArea$sorted[[idx_batch]] %>%
+      select(!contains("sample") & !contains("SIL")) %>%
+      names()
+  )
+  
+  # Initialize the flag
+  lipid_list[["silFilter.flag.Lipid"]] <- 0
+  
+  # Retrieve the SIL version for the current batch
+  SIL_version <- master_list[["templates"]][["Plate SIL version"]][[idx_batch]]
+  
+  # Find matching indices
+  matching_indices <- which(lipid_list$lipid %in% 
+                              filter(master_list$templates[[SIL_version]]$SIL_guide, 
+                                     note %in% master_list$filters$failed_sil.intStds)[["precursor_name"]])
+  
+  # Assign the value 1 to the silFilter.flag.Lipid column at the matching indices
+  lipid_list[["silFilter.flag.Lipid"]][matching_indices] <- 1
+  
+  # Filter and select data
+  filtered_data <- master_list$data$peakArea$sorted[[idx_batch]] %>%
+    filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag == 0)[["sample_name"]]) %>%
     select(!contains("sample") & !contains("SIL")) %>%
-    names())
-
-#tag lipid if its sil.int.std failed
-master_list$filters$lipid.missingValues[["silFilter.flag.Lipid"]] <- 0
-  # Loop for SIL template version control
-    # Store batches (plates)
-    batches <- unique(names(master_list$data$peakArea$statTargetProcessed))
-    for (idx_batch in batches) {
-      SIL_version <- master_list[["templates"]][["Plate SIL version"]][[idx_batch]]
-      matching_indices <- which(master_list$filters$lipid.missingValues$lipid %in% filter(master_list$templates[[SIL_version]]$SIL_guide, note %in% master_list$filters$failed_sil.intStds)[["precursor_name"]])
-      # Assign the value 1 to the silFilter.flag.Lipid column at the matching indices only if it hasn't been set already
-      master_list$filters$lipid.missingValues[["silFilter.flag.Lipid"]][matching_indices] <- ifelse(is.na(master_list$filters$lipid.missingValues[["silFilter.flag.Lipid"]][matching_indices]), 1, master_list$filters$lipid.missingValues[["silFilter.flag.Lipid"]][matching_indices])
-    }
-
-#loop for every batch
-for(idx_batch in names(master_list$data$peakArea$sorted)){
-  master_list$filters$lipid.missingValues[[paste0(idx_batch,".peakArea<5000[LOD]")]] <- colSums(
-    x= (master_list$data$peakArea$sorted[[idx_batch]] %>%
-          #only check samples that passed mv filter in previous step
-          filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag==0)[["sample_name"]]) %>%
-          select(!contains("sample") & !contains("SIL")) %>%
-          as.matrix()) <5000, na.rm = T)
+    as.matrix()
   
-  #na values
-  master_list$filters$lipid.missingValues[[paste0(idx_batch,".naValues")]] <- colSums(
-    x= (master_list$data$peakArea$sorted[[idx_batch]] %>%
-          #only check samples that passed mv filter in previous step
-          filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag==0)[["sample_name"]]) %>%
-          select(!contains("sample") & !contains("SIL")) %>%
-          as.matrix()) %>%
-      is.na(), na.rm = T)
+  # Peak area < 5000 (LOD)
+  lipid_list[["peakArea<5000[LOD]"]] <- colSums(filtered_data < 5000, na.rm = TRUE)
   
-  #nan values
-  master_list$filters$lipid.missingValues[[paste0(idx_batch,".nanValues")]] <- colSums(
-    x= (master_list$data$peakArea$sorted[[idx_batch]] %>%
-          #only check samples that passed mv filter in previous step
-          filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag==0)[["sample_name"]]) %>%
-          select(!contains("sample") & !contains("SIL")) %>%
-          as.matrix()) %>%
-      is.nan(), na.rm = T)
+  # NA values
+  lipid_list[["naValues"]] <- colSums(is.na(filtered_data), na.rm = TRUE)
   
-  #inf values
-  master_list$filters$lipid.missingValues[[paste0(idx_batch,".infValues")]] <- colSums(
-    x= (master_list$data$peakArea$sorted[[idx_batch]] %>%
-          #only check samples that passed mv filter in previous step
-          filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag==0)[["sample_name"]]) %>%
-          select(!contains("sample") & !contains("SIL")) %>%
-          as.matrix()) %>%
-      is.infinite(), na.rm = T)
+  # NaN values
+  lipid_list[["nanValues"]] <- colSums(is.nan(filtered_data), na.rm = TRUE)
   
-  #total missing values for plate
-  master_list$filters$lipid.missingValues[[paste0(idx_batch,".totalMissingValues")]] <-  rowSums(x= (master_list$filters$lipid.missingValues %>%
-                                                                                                            select(contains(idx_batch))%>%
-                                                                                                            as.matrix()),
-                                                                                                      na.rm = T)
-  #only keep lipid has <50% missing values
-  master_list$filters$lipid.missingValues[[paste0(idx_batch, ".flag.Lipid[Plate]")]] <- 0
-  master_list$filters$lipid.missingValues[[paste0(idx_batch, ".flag.Lipid[Plate]")]][which(
-    master_list$filters$lipid.missingValues[[paste0(idx_batch,".totalMissingValues")]] > (nrow(
-      (master_list$data$peakArea$sorted[[idx_batch]] %>%
-         #only check samples that passed mv filter in previous step
-         filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag==0)[["sample_name"]]))) * 0.5)
+  # Infinite values
+  lipid_list[["infValues"]] <- colSums(is.infinite(filtered_data), na.rm = TRUE)
+  
+  # Total missing values for plate
+  lipid_list[["totalMissingValues"]] <- rowSums(
+    lipid_list %>%
+      select(contains(idx_batch)) %>%
+      as.matrix(),
+    na.rm = TRUE
+  )
+  
+  # Only keep lipids with <50% missing values
+  lipid_list[["flag.Lipid[Plate]"]] <- 0
+  lipid_list[["flag.Lipid[Plate]"]][which(
+    lipid_list[["totalMissingValues"]] > 
+      (nrow(filtered_data) * 0.5)
   )] <- 1
+  
+  # Store the results for the current batch
+  lipid_results[[idx_batch]] <- lipid_list
 }
 
-#for all plates
-master_list$filters$lipid.missingValues[[paste0("allPlates.peakArea<5000[LOD]")]] <- colSums(
-  x= (master_list$data$peakArea$sorted %>%
-        bind_rows() %>%
-        #only check samples that passed mv filter in previous step
-        filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag==0)[["sample_name"]]) %>%
-        select(!contains("sample") & !contains("SIL")) %>%
-        as.matrix()) <5000, na.rm = T)
+# Combine the results for all batches
+master_list$filters$lipid.missingValues <- bind_rows(lipid_results, .id = "batch")
 
-#na values
-master_list$filters$lipid.missingValues[[paste0("allPlates.naValues")]] <- colSums(
-  x= (master_list$data$peakArea$sorted %>%
-        bind_rows() %>%
-        #only check samples that passed mv filter in previous step
-        filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag==0)[["sample_name"]]) %>%
-        select(!contains("sample") & !contains("SIL")) %>%
-        as.matrix()) %>%
-    is.na(), na.rm = T)
-
-#nan values
-master_list$filters$lipid.missingValues[[paste0("allPlates.nanValues")]] <- colSums(
-  x=  (master_list$data$peakArea$sorted %>%
-         bind_rows() %>%
-         #only check samples that passed mv filter in previous step
-         filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag==0)[["sample_name"]]) %>%
-         select(!contains("sample") & !contains("SIL")) %>%
-         as.matrix()) %>%
-    is.nan(), na.rm = T)
-
-#inf values
-master_list$filters$lipid.missingValues[[paste0("allPlates.infValues")]] <- colSums(
-  x=  (master_list$data$peakArea$sorted %>%
-         bind_rows() %>%
-         #only check samples that passed mv filter in previous step
-         filter(sample_name %in% filter(master_list$filters$samples.missingValues, sample.flag==0)[["sample_name"]]) %>%
-         select(!contains("sample") & !contains("SIL")) %>%
-         as.matrix()) %>%
-    is.infinite(), na.rm = T)
-
-#total missing values for plate
-master_list$filters$lipid.missingValues[[paste0("allPlates.totalMissingValues")]] <-  rowSums(x= (master_list$filters$lipid.missingValues %>%
-                                                                                                         select(contains("allPlates"))%>%
-                                                                                                         as.matrix()),
-                                                                                                   na.rm = T)
-
-#does lipid fail across all plates?
-# add fail.filter column if lipid failed for a plate or for all plates
+# Does lipid fail across all plates?
+# Add fail.filter column if lipid failed for a plate or for all plates
 master_list$filters$lipid.missingValues[["PROJECT.flag.Lipid"]] <- 0
-master_list$filters$lipid.missingValues[["PROJECT.flag.Lipid"]][which(
-  rowSums(x= (master_list$filters$lipid.missingValues %>%
-                select(contains("flag.Lipid")) %>%
-                as.matrix()) >= 1, 
-          na.rm = T) > 0
-)] <- 1
+# Loop through each unique lipid
+for (lipid in unique(master_list$filters$lipid.missingValues$lipid)) {
+  # Subset the data for the current lipid
+  lipid_data <- master_list$filters$lipid.missingValues %>%
+    filter(lipid == !!lipid) %>%
+    select(contains("flag.Lipid")) %>%
+    as.matrix()
+  
+  # Check if the lipid fails in any plate
+  if (all(rowSums(lipid_data, na.rm = TRUE) >= 1)) {
+    master_list$filters$lipid.missingValues[["PROJECT.flag.Lipid"]][master_list$filters$lipid.missingValues$lipid == lipid] <- 1
+  }
+}
 
-#create a failed lipid list
+
+# Create a failed lipid list
 master_list$filters$failed_lipids <- filter(master_list$filters$lipid.missingValues, PROJECT.flag.Lipid == 1)[["lipid"]]
 
 
 ## 2.4. RSD filter ------------
 # following mising value filtering, replicate QC samples are evaluated to see the precision of measurement (represented by % relative standard deviation)
-# features with a %RSD >30% are flagged for removal
+# features per plate with a %RSD >30% are flagged for removal
 
 ### 2.4.a. peakArea ---------
 master_list$filters$rsd <- tibble()
@@ -1290,16 +1329,19 @@ master_list$filters$rsd <- tibble()
 for(idx_batch in names(master_list$data$peakArea$imputed)){
   loopData <- master_list$data$peakArea$imputed[[idx_batch]] %>%
     filter(!sample_name %in% master_list$filters$failed_samples) %>%
-    filter(sample_type == "qc") %>%
+    filter(sample_type %in% c("qc")) %>%
     select(!contains("sample")) %>%
     select(!contains("SIL"))
   loopRSD <- (apply(X = loopData, MARGIN = 2, FUN = sd)/apply(X = loopData, MARGIN = 2, FUN = mean))*100
+  
+#loopMAD <- (apply(X = loopData, MARGIN = 2, FUN = mad) / apply(X = loopData, MARGIN = 2, FUN = median)) * 100 #Median absolute deviation
+
   
   #export tibble
   master_list$filters$rsd <- bind_rows(
     master_list$filters$rsd,
     rbind(c("peakArea",idx_batch, loopRSD)) %>% 
-      as.tibble() %>%
+      as_tibble() %>%
       mutate(across(names(loopRSD), as.numeric))
   )
 }
@@ -1308,7 +1350,7 @@ for(idx_batch in names(master_list$data$peakArea$imputed)){
 loopData <- master_list$data$peakArea$imputed %>%
   bind_rows() %>%
   filter(!sample_name %in% master_list$filters$failed_samples) %>%
-  filter(sample_type == "qc") %>%
+  filter(sample_type %in% c("qc")) %>%
   select(!contains("sample")) %>%
   select(!contains("SIL"))
 loopRSD <- (apply(X = loopData, MARGIN = 2, FUN = sd)/apply(X = loopData, MARGIN = 2, FUN = mean))*100
@@ -1317,7 +1359,7 @@ loopRSD <- (apply(X = loopData, MARGIN = 2, FUN = sd)/apply(X = loopData, MARGIN
 master_list$filters$rsd <- bind_rows(
   master_list$filters$rsd,
   rbind(c("peakArea", "allBatches", loopRSD)) %>% 
-    as.tibble() %>%
+    as_tibble() %>%
     mutate(across(names(loopRSD), as.numeric))
 )
 
@@ -1326,7 +1368,7 @@ master_list$filters$rsd <- bind_rows(
 for(idx_batch in names(master_list$data$concentration$imputed)){
   loopData <- master_list$data$concentration$imputed[[idx_batch]] %>%
     filter(!sample_name %in% master_list$filters$failed_samples) %>%
-    filter(sample_type == "qc") %>%
+    filter(sample_type %in% c("qc")) %>%
     select(!contains("sample")) %>%
     select(!contains("SIL"))
   loopRSD <- (apply(X = loopData, MARGIN = 2, FUN = sd)/apply(X = loopData, MARGIN = 2, FUN = mean))*100
@@ -1335,7 +1377,7 @@ for(idx_batch in names(master_list$data$concentration$imputed)){
   master_list$filters$rsd <- bind_rows(
     master_list$filters$rsd,
     rbind(c("concentration",idx_batch, loopRSD)) %>% 
-      as.tibble() %>%
+      as_tibble() %>%
       mutate(across(names(loopRSD), as.numeric))
   )
 }
@@ -1344,7 +1386,7 @@ for(idx_batch in names(master_list$data$concentration$imputed)){
 loopData <- master_list$data$concentration$imputed %>%
   bind_rows() %>%
   filter(!sample_name %in% master_list$filters$failed_samples) %>%
-  filter(sample_type == "qc") %>%
+  filter(sample_type %in% c("qc")) %>%
   select(!contains("sample")) %>%
   select(!contains("SIL"))
 loopRSD <- (apply(X = loopData, MARGIN = 2, FUN = sd)/apply(X = loopData, MARGIN = 2, FUN = mean))*100
@@ -1353,7 +1395,7 @@ loopRSD <- (apply(X = loopData, MARGIN = 2, FUN = sd)/apply(X = loopData, MARGIN
 master_list$filters$rsd <- bind_rows(
   master_list$filters$rsd,
   rbind(c("concentration","allBatches", loopRSD)) %>% 
-    as.tibble() %>%
+    as_tibble() %>%
     mutate(across(names(loopRSD), as.numeric))
 )
 
@@ -1362,7 +1404,7 @@ master_list$filters$rsd <- bind_rows(
 for(idx_batch in names(master_list$data$concentration$statTargetProcessed)){
   loopData <- master_list$data$concentration$statTargetProcessed[[idx_batch]] %>%
     filter(!sample_name %in% master_list$filters$failed_samples) %>%
-    filter(sample_type == "qc") %>%
+    filter(sample_type %in% c("qc")) %>%
     select(!contains("sample")) %>%
     select(!contains("SIL"))
   loopRSD <- (apply(X = loopData, MARGIN = 2, FUN = sd)/apply(X = loopData, MARGIN = 2, FUN = mean))*100
@@ -1371,7 +1413,7 @@ for(idx_batch in names(master_list$data$concentration$statTargetProcessed)){
   master_list$filters$rsd <- bind_rows(
     master_list$filters$rsd,
     rbind(c("concentration[statTarget]",idx_batch, loopRSD)) %>% 
-      as.tibble() %>%
+      as_tibble() %>%
       mutate(across(names(loopRSD), as.numeric))
   )
 }
@@ -1380,7 +1422,7 @@ for(idx_batch in names(master_list$data$concentration$statTargetProcessed)){
 loopData <- master_list$data$concentration$statTargetProcessed %>%
   bind_rows() %>%
   filter(!sample_name %in% master_list$filters$failed_samples) %>%
-  filter(sample_type == "qc") %>%
+  filter(sample_type %in% c("qc")) %>%
   select(!contains("sample")) %>%
   select(!contains("SIL"))
 loopRSD <- (apply(X = loopData, MARGIN = 2, FUN = sd)/apply(X = loopData, MARGIN = 2, FUN = mean))*100
@@ -1389,7 +1431,7 @@ loopRSD <- (apply(X = loopData, MARGIN = 2, FUN = sd)/apply(X = loopData, MARGIN
 master_list$filters$rsd <- bind_rows(
   master_list$filters$rsd,
   rbind(c("concentration[statTarget]","allBatches", loopRSD)) %>% 
-    as.tibble() %>%
+    as_tibble() %>%
     mutate(across(names(loopRSD), as.numeric))
 )
 #tidy rsd table
@@ -1412,6 +1454,7 @@ metric =  c("totalSamples", "studySamples", "ltrSamples", "vltrSamples", "sltrSa
             "rsd<30%[concentration.statTarget]", "rsd<20%[concentration.statTarget]", "rsd<10%[concentration.statTarget]")
 
 # create tibble
+master_list$summary_tables <- NULL
 master_list$summary_tables$projectOverview <- tibble(metric = metric)
 
 #fill info for each plate/batch
@@ -1429,8 +1472,8 @@ for(idx_batch in names(master_list$data$peakArea$sorted)){
       c("lipidTargets", ncol(master_list$data$peakArea$sorted[[idx_batch]] %>% select(-contains("sample"), - contains("SIL")))),
       c("SIL.IntStds", ncol(master_list$data$peakArea$sorted[[idx_batch]] %>% select(contains("SIL")))),
       c("missingValueFilterFlags[samples]", master_list$filters$samples.missingValues %>% filter(sample_plate_id == idx_batch & sample.flag == 1) %>% nrow()),
-      c("missingValueFilterFlags[SIL.IS]", which(as.matrix(master_list$filters$sil.intStd.missingValues %>% select(contains(idx_batch)) %>% select(contains("flag")))[,1] == 1) %>% length()),
-      c("missingValueFilterFlags[lipidTargets]", which(as.matrix(master_list$filters$lipid.missingValues %>% select(contains(idx_batch)) %>% select(contains("flag")))[,1] == 1) %>% length()),
+      c("missingValueFilterFlags[SIL.IS]", which(as.matrix(master_list[["filters"]][["sil.intStd.missingValues"]][[idx_batch]][["flag.SIL.intStd[Plate]"]])[,1] == 1) %>% length()), # Broken
+      c("missingValueFilterFlags[lipidTargets]", which(as.matrix(master_list$filters$lipid.missingValues %>% filter(batch == idx_batch) %>% select(contains("flag")))[,1] == 1) %>% length()),#Broken
       c("rsd<30%[peakArea]", which(master_list$filters$rsd %>% filter(dataBatch == idx_batch & dataSource == "peakArea") %>% select(!contains("data")) %>% select(!any_of(master_list$filters$failed_lipids)) <30) %>% length()),
       c("rsd<20%[peakArea]", which(master_list$filters$rsd %>% filter(dataBatch == idx_batch & dataSource == "peakArea") %>% select(!contains("data")) %>% select(!any_of(master_list$filters$failed_lipids)) <20) %>% length()),
       c("rsd<10%[peakArea]", which(master_list$filters$rsd %>% filter(dataBatch == idx_batch & dataSource == "peakArea") %>% select(!contains("data")) %>% select(!any_of(master_list$filters$failed_lipids)) <10) %>% length()),
@@ -1463,8 +1506,8 @@ master_list$summary_tables$projectOverview <- left_join(
     c("lipidTargets", ncol(bind_rows(master_list$data$peakArea$sorted) %>% select(-contains("sample"), - contains("SIL")))),
     c("SIL.IntStds", ncol(bind_rows(master_list$data$peakArea$sorted) %>% select(contains("SIL")))),
     c("missingValueFilterFlags[samples]", master_list$filters$samples.missingValues %>% filter(sample.flag == 1) %>% nrow()),
-    c("missingValueFilterFlags[SIL.IS]", which(as.matrix(master_list$filters$sil.intStd.missingValues %>% select(contains("PROJECT.flag")))[,1] == 1) %>% length()),
-    c("missingValueFilterFlags[lipidTargets]", which(as.matrix(master_list$filters$lipid.missingValues %>% select(contains("PROJECT.flag")))[,1] == 1) %>% length()),
+    #c("missingValueFilterFlags[SIL.IS]", which(as.matrix(master_list$filters$sil.intStd.missingValues$allPlates.totalMissingValues %>% select(contains("PROJECT.flag")))[,1] == 1) %>% length()),
+    c("missingValueFilterFlags[lipidTargets]", which(as.matrix(master_list$filters$lipid.missingValues$PROJECT.flag.Lipid)[,1] == 1) %>% length()),
     c("rsd<30%[peakArea]", which(master_list$filters$rsd %>% filter(dataBatch == "allBatches" & dataSource == "peakArea") %>% select(!contains("data")) %>% select(!any_of(master_list$filters$failed_lipids)) <30) %>% length()),
     c("rsd<20%[peakArea]", which(master_list$filters$rsd %>% filter(dataBatch == "allBatches" & dataSource == "peakArea") %>% select(!contains("data")) %>% select(!any_of(master_list$filters$failed_lipids)) <20) %>% length()),
     c("rsd<10%[peakArea]", which(master_list$filters$rsd %>% filter(dataBatch == "allBatches" & dataSource == "peakArea") %>% select(!contains("data")) %>% select(!any_of(master_list$filters$failed_lipids)) <10) %>% length()),
@@ -1538,7 +1581,7 @@ for(idx_pca in c("peakArea", "concentration")){
     crossvalI = 1,
     predI = 3,
     algoC = "nipals",
-    log10L = TRUE,
+    log10L = FALSE,
     scale = "pareto",
     plotSubC = NA, 
     fig.pdfC = "none",
@@ -1577,7 +1620,7 @@ master_list$pca$models[["concentration.statTarget"]] <- ropls::opls(
   crossvalI = 1,
   predI = 3,
   algoC = "nipals",
-  log10L = TRUE,
+  log10L = FALSE,
   scale = "pareto",
   plotSubC = NA, 
   fig.pdfC = "none",
@@ -1637,7 +1680,7 @@ for(idx_pca in c("peakArea", "concentration")){
     crossvalI = 1,
     predI = 3,
     algoC = "nipals",
-    log10L = TRUE,
+    log10L = FALSE,
     scale = "pareto",
     plotSubC = NA, 
     fig.pdfC = "none",
@@ -1685,7 +1728,7 @@ master_list$pca$models[["concentration.statTarget.preProcessed"]] <- ropls::opls
   crossvalI = 1,
   predI = 3,
   algoC = "nipals",
-  log10L = TRUE,
+  log10L = FALSE,
   scale = "pareto",
   plotSubC = NA, 
   fig.pdfC = "none",
@@ -1825,27 +1868,81 @@ for(idx_pca in c("PC1", "PC2", "PC3")){
 }
 
 #### targetControlCharts ------------------
-SIL_ver <- master_list[["project_details"]][["is_ver"]]
 #setLists
 master_list$control_charts <- list()
-for(idx_metabolite in filter(master_list$templates[[SIL_ver]]$SIL_guide, control_chart == TRUE)[["precursor_name"]]){
-  #extract SIL int.std
-  idx_sil <- filter(master_list$templates[[SIL_ver]]$SIL_guide, control_chart == TRUE)[["note"]][which(filter(master_list$templates[[SIL_ver]]$SIL_guide, control_chart == TRUE)[["precursor_name"]] == idx_metabolite)]
-  #make plot
+precursor_lists <- list()
+Control_SIL_List <- list()
+Control_SIL_List_Common <- list()
+
+# Create guide for SILS in common through versions
+SIL_versions <- unique(unlist(master_list[["templates"]][["Plate SIL version"]]))
+
+for (SIL_ver in SIL_versions) {
+  SIL_Temp <- master_list$templates[[SIL_ver]]$SIL_guide[grepl("TRUE", master_list$templates[[SIL_ver]]$SIL_guide$control_chart),]
+  precursor_lists[[SIL_ver]] <- SIL_Temp$precursor_name
+  Control_SIL_List[[SIL_ver]] <- SIL_Temp
+}
+
+common_control_charts <- Reduce(intersect, precursor_lists)
+Control_SIL_List_Common <- bind_rows(Control_SIL_List)
+Control_SIL_List_Common <- Control_SIL_List_Common %>% filter(Control_SIL_List_Common$precursor_name %in% common_control_charts)
+
+for (idx_metabolite in common_control_charts) {
+  # Extract SIL int.std
+  idx_sil <- Control_SIL_List_Common %>% filter(Control_SIL_List_Common$precursor_name == idx_metabolite)
+  
+  # # check SIL data
+  # print(paste("SIL data for", idx_metabolite))
+  # print(idx_sil)
+  
+  # Make plot
   master_list$control_charts[[idx_metabolite]] <- ggplotly(
     ggplot(
       data = bind_rows(
-        bind_rows(master_list$data$peakArea$imputed) %>% select(contains("sample"), any_of(idx_metabolite)) %>% #filter(!sample_name %in% master_list$filters$failed_samples) %>%
-          mutate(sample_data_source=".peakArea"),
-        #add SIL data
-        bind_rows(master_list$data$peakArea$imputed) %>% select(contains("sample"), any_of(idx_sil)) %>% #filter(!sample_name %in% master_list$filters$failed_samples) %>%
-          dplyr::rename(!! paste0(idx_metabolite) := !!(paste0(idx_sil))) %>%
-          mutate(sample_data_source=".SIL.peakArea"),
-        bind_rows(master_list$data$concentration$imputed) %>% select(contains("sample"), any_of(idx_metabolite)) %>% #filter(!sample_name %in% master_list$filters$failed_samples) %>%
-          mutate(sample_data_source="concentration"),
-        bind_rows(master_list$data$concentration$statTargetProcessed) %>% select(contains("sample"), any_of(idx_metabolite)) %>% #filter(!sample_name %in% master_list$filters$failed_samples) %>%
-          mutate(sample_data_source="statTargetConcentration")
-      ) %>% dplyr::rename(!!(paste0("value")) := !! paste0(idx_metabolite)),
+        bind_rows(master_list$data$peakArea$imputed) %>% select(contains("sample"), any_of(idx_metabolite)) %>% 
+          mutate(sample_data_source = ".peakArea"),
+        
+        # Add SIL data from various versions
+        bind_rows(master_list$data$peakArea$imputed) %>%
+          select(contains("sample"), any_of(idx_sil$note)) %>%
+          rowwise() %>% 
+          mutate(SIL = paste(na.omit(c_across(contains("SIL"))), collapse = " ")) %>% 
+          ungroup() %>%
+          mutate(SIL = as.numeric(SIL)) %>%
+          #mutate(SIL = log(SIL)) %>% 
+          dplyr::rename(!!paste0(idx_metabolite) := SIL) %>%
+          select(-contains("SIL")) %>%
+          mutate(sample_data_source = ".SIL.peakArea"),
+        
+        #Add SIL data post stattarget
+        bind_rows(master_list$data$peakArea$statTargetProcessed) %>%
+          select(contains("sample"), any_of(idx_sil$note)) %>%
+          rowwise() %>% 
+          mutate(SIL = paste(na.omit(c_across(contains("SIL"))), collapse = " ")) %>% 
+          ungroup() %>%
+          mutate(SIL = as.numeric(SIL)) %>%
+          #mutate(SIL = log(SIL)) %>% 
+          dplyr::rename(!!paste0(idx_metabolite) := SIL) %>%
+          select(-contains("SIL")) %>%
+          mutate(sample_data_source = "statTarget.SIL.peakArea"),
+        
+        # Add concentration data
+        bind_rows(master_list$data$concentration$imputed) %>%
+          select(contains("sample"), any_of(idx_metabolite)) %>%
+          mutate(sample_data_source = "concentration"), #%>%
+          #mutate(!!sym(idx_metabolite) := log(as.numeric(!!sym(idx_metabolite)))),
+        
+        # Add statTarget concentration data
+        bind_rows(master_list$data$concentration$statTargetProcessed) %>%
+          select(contains("sample"), any_of(idx_metabolite)) %>%
+          mutate(sample_data_source = "statTargetConcentration"), #%>%
+          #mutate(!!sym(idx_metabolite) := log(as.numeric(!!sym(idx_metabolite))))
+        
+        ) 
+      #rename metabolite
+      %>% dplyr::rename(!!paste0("value") := !!paste0(idx_metabolite)),
+      
+      #Structure ggplot
       aes(x = sample_run_index, y = value,
           group = sample_name,
           fill = sample_type_factor,
@@ -1860,24 +1957,25 @@ for(idx_metabolite in filter(master_list$templates[[SIL_ver]]$SIL_guide, control
       scale_color_manual(values = master_list$project_details$plot_colour) +
       scale_size_manual(values = master_list$project_details$plot_size) +
       ylab(paste0(idx_metabolite)) +
-      guides(shape = "none", size = "none", color = "none", fill=guide_legend(title=paste0("sample_type"))) +
-      geom_text(inherit.aes = FALSE, data = annotate_label, aes(x = sample_run_index,  y = value, label = sample_plate_id), col = "black") +
+      guides(shape = "none", size = "none", color = "none", fill = guide_legend(title = paste0("sample_type"))) +
+      geom_text(inherit.aes = FALSE, data = annotate_label, aes(x = sample_run_index, y = value, label = sample_plate_id), col = "black") +
       facet_wrap(facets = "sample_data_source", ncol = 1, scales = "free_y")
   ) %>% layout(
     title = list(
       text = paste0(idx_metabolite, "; control chart; ", master_list$project_details$project_name),
-      y = 1.1,
-      x=0.05),
+      y = 1.1, 
+      x = 0.05),
     margin = list(
-      l = 10, r = 10, b=65, t=85),
+      l = 10, r = 10, b = 65, t = 85),
     legend = list(
       orientation = "v",   # show entries horizontally
       xanchor = "center",  # use center of legend as anchor
       x = 1.1,
-      y= 0.5
+      y = 0.5
     )           # put legend in center of x-axis
   )
-  }
+}
+
 
 # . ------------------------------------------------------------------------------------------------------------------------------  
 #PHASE 5: EXPORTS ------------------------------------
@@ -1888,7 +1986,7 @@ master_list$summary_tables$odsAreaOverview <- rbind(
   c("user", master_list$project_details$user_name),
   c("lipidExploreR_version", master_list$project_details$lipidExploreR_version),
   c("qcType_preProcessing|filtering", master_list$project_details$qc_type),
-  c("SIL_Int.Std_version", master_list$project_details$is_ver),
+  c("SIL_Int.Std_version", paste(unique(master_list[["templates"]][["Plate SIL version"]]), collapse = ',', sep = ',')),
   c("total.StudyPlates", bind_rows(master_list$data$peakArea$sorted)[["sample_plate_id"]] %>% unique() %>% length()),
   c("total.Samples", bind_rows(master_list$data$peakArea$sorted) %>% nrow()),
   c("studySamples", bind_rows(master_list$data$peakArea$sorted) %>% filter(sample_type_factor == "sample") %>% nrow()),
@@ -1955,15 +2053,15 @@ openxlsx::write.xlsx(
 
 ## 5.2. html report -------------------------
 
-### 5.2.a. download template ----
-fileConn<-file(paste0(master_list$project_details$project_dir, "/html_report/lipid_exploreR_report_template_v4.R"))
-writeLines(httr::GET(url = paste0(master_list$project_details$github_master_dir, "templates/lipid_exploreR_report_template_v4.R")) %>%
-             httr::content(as = "text"), fileConn)
-close(fileConn)
+# ### 5.2.a. download template ----
+# fileConn<-file(paste0("C:/Users/Hszem/OneDrive - Murdoch University/Masters THESIS/Documents/GitHub/targeted_lipid_exploreR/v5 Developmental/templates/lipid_exploreR_report_template_v5.R"))
+# writeLines(httr::GET(url = paste0(master_list$project_details$github_master_dir, "templates/lipid_exploreR_report_template_v4.R")) %>%
+#              httr::content(as = "text"), fileConn)
+# close(fileConn)
 
 
 ### 2. render template ----
-rmarkdown::render(input = paste0(master_list$project_details$project_dir, "/html_report/lipid_exploreR_report_template_v4.R"),
+rmarkdown::render(input ="C:/Users/Hszem/OneDrive - Murdoch University/Masters THESIS/Documents/GitHub/targeted_lipid_exploreR/v5 Developmental/templates/lipid_exploreR_report_template_v5.R",
                   output_format = "html_document",
                   output_dir = paste0(master_list$project_details$project_dir, "/html_report"),
                   output_file = paste0(master_list$project_details$project_dir, 
