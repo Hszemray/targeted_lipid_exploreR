@@ -1,4 +1,6 @@
-#1. LipidExploreR setup-----
+#.-----
+#1. Project setup-----
+start_time <- Sys.time()
 #### load packages----
 package_list <- c('statTarget', 'svDialogs', 'ggpubr', 'janitor', 'plotly', 'knitr', 'viridisLite', 'mzR', 'httr', 'cowplot', 'matrixStats', 'tidyverse')
 
@@ -35,6 +37,8 @@ master_list$project_details$wiff_file_paths <- list.files(path = paste0(master_l
                                                   ignore.case = FALSE, include.dirs = FALSE, no.. = FALSE)
 #set plateIDs 
 master_list$project_details$plateID <- stringr::str_extract(master_list$project_details$wiff_file_paths,"COVp\\d+") %>% str_extract(., "p\\d+")
+#set script log 
+master_list$project_details$script_log$timestamps$start_time <- start_time;rm(start_time)
 
 ##read in mrm_guide from github
 versions <- c("v1", "v2", "v3", "v4")
@@ -53,7 +57,9 @@ master_list$environment$user_functions$mrm_RT_findeR_mzR <- source(paste0(
 #Skyline_Commander
 #Change to github repo!!!!! ----
 master_list$environment$user_functions$skyline_commandR <- source(paste0("C:/Users/Hszem/OneDrive - Murdoch University/Masters THESIS/Documents/GitHub/targeted_lipid_exploreR/v6 Automated/functions/FUNC_lipidExploreR_Skyline_CommandR.R"))
-
+#update_script_log
+###Change to github repo!!!!! ----
+master_list$environment$user_functions$update_script_log <- source(paste0("C:/Users/Hszem/OneDrive - Murdoch University/Masters THESIS/Documents/GitHub/targeted_lipid_exploreR/v6 Automated/functions/FUNC_lipidExploreR_Update_script_log.R"))
 
 ##setup project directories----
 for (plate_ID in master_list$project_details$plateID){ 
@@ -74,6 +80,10 @@ for (plate_ID in master_list$project_details$plateID){
   #html_reports
   if(!dir.exists(paste0(master_list$project_details$project_dir,"/",plate_ID, "/html_report"))){dir.create(paste0(master_list$project_details$project_dir, "/",plate_ID, "/html_report"))}
 }
+
+#update script log
+master_list <- master_list$environment$user_functions$update_script_log$value(master_list, "project_setup", "start_time", "ms_convert")
+
 #.----
 
 #2. msConvert---- 
@@ -151,6 +161,10 @@ for (plate_ID in master_list$project_details$plateID) {
   move_folder(file.path(master_list$project_details$project_dir,"wiff"), file.path(master_list$project_details$project_dir,"archive"))
   ##mzml files
   move_folder(file.path(master_list$project_details$project_dir,"msConvert_mzml_output"), file.path(master_list$project_details$project_dir,"archive"))
+
+  #update script log
+  master_list <- master_list$environment$user_functions$update_script_log$value(master_list, "msconvert", "project_setup", "mzR_mzml_import")
+    
 #.----
   
 #3. import mzml files using mzR ------------------------------------
@@ -195,6 +209,10 @@ for(idx_plate in master_list$project_details$plateID){
       
       master_list$project_details$mzml_sample_list[[idx_plate]] <- c(master_list$project_details$mzml_sample_list[[idx_plate]], names(master_list$data[[idx_plate]]$mzR))
 }
+
+  #update script log
+  master_list <- master_list$environment$user_functions$update_script_log$value(master_list, "mzR_mzml_import", "ms_convert", "mzml_file_processing")
+    
 #.----
 #4. mzml file processing----
   #initialise loop per plate 
@@ -393,4 +411,6 @@ setwd(master_list$project_details$project_dir)
 #     Sys.Date(), "_", master_list$project_details$user_name, "_", master_list$project_details$project_name, "_all_plates",
 #     "_skylineR.rda"))
 
-print("SkylineR is now complete, please run qcCheckR now. :)")
+
+#update script log
+master_list <- master_list$environment$user_functions$update_script_log$value(master_list, "mzml_file_processing", "mzR_mzml_import", "SkylineR is now complate, please run QcCheckR Thankyou for using Lipid Explorer :)")

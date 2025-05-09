@@ -47,7 +47,6 @@ rda_fileList <- rda_fileList[grepl(".rda", rda_fileList, ignore.case = T)]
 rda_fileList <- rda_fileList[!grepl("archive", rda_fileList)]
 
 #display rda for assessment
-#message/print process!!!!######
 cat(paste0("The following .rda are currently selected for QC:\n   ~/", 
             paste0(rda_fileList, collapse = " \n   ~/"),
             "\n To remove any .rda from procesing workflow move them to a sub-folder tagged `archive`."))
@@ -62,7 +61,6 @@ if(length(rda_fileList)>0){
 }
 
 #display rda for assessment
-#message/print process!!!!######
 master_list$project_details$script_log$messages$rda_assesment <- paste0("The following .rda are currently selected for QC:\n   ~/", 
                                                                         paste0(rda_fileList, collapse = " \n   ~/"),
                                                                         "\n To remove any .rda from procesing workflow move them to a sub-folder tagged `archive`.")
