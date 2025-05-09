@@ -1,5 +1,5 @@
-#LipidExploreR setup-----
-#### load packages
+#1. LipidExploreR setup-----
+#### load packages----
 package_list <- c('statTarget', 'svDialogs', 'ggpubr', 'janitor', 'plotly', 'knitr', 'viridisLite', 'mzR', 'httr', 'cowplot', 'matrixStats', 'tidyverse')
 
 for(idx_package in package_list){
@@ -36,7 +36,7 @@ master_list$project_details$wiff_file_paths <- list.files(path = paste0(master_l
 #set plateIDs 
 master_list$project_details$plateID <- stringr::str_extract(master_list$project_details$wiff_file_paths,"COVp\\d+") %>% str_extract(., "p\\d+")
 
-##read in mrm_guide from github ----
+##read in mrm_guide from github
 versions <- c("v1", "v2", "v3", "v4")
 for (version in versions) {
   master_list$templates$mrm_guides[[version]]$mrm_guide <- read_csv(
@@ -45,7 +45,7 @@ for (version in versions) {
   )
 }
 
-#source functions----
+##source functions----
 #RT finder
 master_list$environment$user_functions$mrm_RT_findeR_mzR <- source(paste0(
   master_list$project_details$github_master_dir , 
@@ -55,7 +55,7 @@ master_list$environment$user_functions$mrm_RT_findeR_mzR <- source(paste0(
 master_list$environment$user_functions$skyline_commandR <- source(paste0("C:/Users/Hszem/OneDrive - Murdoch University/Masters THESIS/Documents/GitHub/targeted_lipid_exploreR/v6 Automated/functions/FUNC_lipidExploreR_Skyline_CommandR.R"))
 
 
-##setup project directories-----
+##setup project directories----
 for (plate_ID in master_list$project_details$plateID){ 
   #plate
   if(!dir.exists(paste0(master_list$project_details$project_dir, "/",plate_ID))){dir.create(paste0(master_list$project_details$project_dir, "/",plate_ID))}
@@ -74,8 +74,12 @@ for (plate_ID in master_list$project_details$plateID){
   #html_reports
   if(!dir.exists(paste0(master_list$project_details$project_dir,"/",plate_ID, "/html_report"))){dir.create(paste0(master_list$project_details$project_dir, "/",plate_ID, "/html_report"))}
 }
+#.----
 
-##generate mzml from wiff files----
+#2. msConvert---- 
+#interact with msConvert through terminalgenerate mzml from wiff files
+
+#Construct command for terminal
   # replace all "/" with "\\"
   file_paths <- gsub("/", "\\\\", master_list$project_details$wiff_file_paths)
   # define the base command
@@ -128,7 +132,7 @@ for (plate_ID in master_list$project_details$plateID) {
 }
 
 #move wiff and output mzml directory
-  ##Function for moving folder
+  ##Function for moving folders
   move_folder <- function(source_dir, dest_dir) {
     # Create the destination directory if it doesn't exist
     if (!dir.exists(dest_dir)) {
@@ -147,8 +151,9 @@ for (plate_ID in master_list$project_details$plateID) {
   move_folder(file.path(master_list$project_details$project_dir,"wiff"), file.path(master_list$project_details$project_dir,"archive"))
   ##mzml files
   move_folder(file.path(master_list$project_details$project_dir,"msConvert_mzml_output"), file.path(master_list$project_details$project_dir,"archive"))
-
-# import mzml files using mzR ------------------------------------
+#.----
+  
+#3. import mzml files using mzR ------------------------------------
 #initialise mzml_filelist
 mzml_filelist <- list()
 #Initialise loop to go over each plate
@@ -190,12 +195,12 @@ for(idx_plate in master_list$project_details$plateID){
       
       master_list$project_details$mzml_sample_list[[idx_plate]] <- c(master_list$project_details$mzml_sample_list[[idx_plate]], names(master_list$data[[idx_plate]]$mzR))
 }
-
-#mzml file processing----
+#.----
+#4. mzml file processing----
   #initialise loop per plate 
   for (plate_idx in master_list$project_details$plateID){
   print(paste("Processing plate:",plate_idx))  
-  ## parameters for lipid method version control -----
+  ## parameters method version control -----
   # Check and set qc_type
   if (any(grepl("LTR", master_list$project_details$mzml_sample_list[[plate_idx]]))) {
     master_list$project_details$qc_type <- "LTR"
@@ -267,10 +272,9 @@ for(idx_plate in master_list$project_details$plateID){
               file = paste0(master_list$project_details$project_dir, "/", plate_idx, "/data/skyline/", Sys.Date(), "_peak_boundary_update_",
                             master_list$project_details$project_name,"_",plate_idx, ".csv"))
     
-    ##Run skyline interface----
-    #Function to interact with cmd to run skylinerunner.exe
+   #run skyline interface----
+    
     #Import blank files into structure
-    #Replace with template from github once running------
       ##Blank .sky file
       file.copy(from = paste0("C:/Users/Hszem/OneDrive - Murdoch University/Masters THESIS/Documents/GitHub/targeted_lipid_exploreR/v6 Automated/templates/default_skyline_file.sky"),
                 to = paste0(master_list$project_details$project_dir,"/",plate_idx, "/data/skyline" ))
@@ -384,9 +388,9 @@ rm(list = c(ls()[which(ls() != "master_list")]))
 setwd(master_list$project_details$project_dir)
   
 #export .rda Master RDA containing data for all plates  
-save(master_list, file = paste0(
-    master_list$project_details$project_dir,"/",
-    Sys.Date(), "_", master_list$project_details$user_name, "_", master_list$project_details$project_name, "_all_plates",
-    "_skylineR.rda"))
+# save(master_list, file = paste0(
+#     master_list$project_details$project_dir,"/archive/",
+#     Sys.Date(), "_", master_list$project_details$user_name, "_", master_list$project_details$project_name, "_all_plates",
+#     "_skylineR.rda"))
 
 print("SkylineR is now complete, please run qcCheckR now. :)")

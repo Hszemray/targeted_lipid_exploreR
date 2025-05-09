@@ -1,5 +1,6 @@
 # . ------------------------------------------------------------------------------------------------------------------------------  
 # PROJECT SETUP: --------------------------------------
+start_time <- Sys.time()
 ## 1. load packages: --------------------------------------
 #clean skylineR/previous session
 rm(master_list)
@@ -7,26 +8,17 @@ rm(master_list)
 package_list <- c('statTarget', 'svDialogs', 'ggpubr', 'janitor', 'plotly', 'knitr', 'viridisLite', 'mzR', 'httr', 'cowplot', 'matrixStats', 'tidyverse')
 
 for(idx_package in package_list){
-  if(length(which(row.names(installed.packages()) == idx_package)) > 0){
-    suppressMessages(require(package = idx_package,
-                             character.only = TRUE))
-  } else {
-    dlg_message(
-      paste0("the package ", idx_package, " is not installed. Please install ", idx_package, " before continuing.")
-    )
+  if(!require(package = idx_package, character.only = TRUE)){
+    install.packages(idx_package, dependencies = TRUE)
+    suppressMessages(require(package = idx_package, character.only = TRUE))
   }
 }
 
-## 2. Welcome section/project set upload skylineR --------------------------------------
-
-#welcome messages
-#if(!exists("master_list")){
-dlg_message("Welcome to lipid qc exploreR! :-)", type = 'ok'); dlg_message("please run the skylineR script (perPlate) before running this script", type = 'ok'); dlg_message("select project parent master folder. e.g. ~projects/parent/", type = 'ok');  
-# choose directory
-dlg_message("select parent master folder with skylineR subfolders", type = 'ok');skylineR_directory <- rstudioapi::selectDirectory()
+## 2. project setup / load skylineR --------------------------------------
+skylineR_directory <- paste0("C:/Users/Hszem/OneDrive - Murdoch University/Desktop/Dummy Cohort") # Change to entering from notebook later##############################
 
 #selct what plates to qc
-tempQCflag <- dlgInput("which plate do you want to QC. must match plate subfolder OR if you want to qc all plates select all", "p0xy or all")$res
+tempQCflag <- "all"
 
 #rda
 if(tempQCflag == "all"){
@@ -35,7 +27,7 @@ if(tempQCflag == "all"){
 
 #does plate subfolder exist
 if(!dir.exists(paste0(skylineR_directory, "/", tempQCflag))){
-  dlg_message(paste0(skylineR_directory, "/", tempQCflag, " does not exist. check and re-run script"), type = 'ok')
+  stop(print(paste0(skylineR_directory, "/", tempQCflag, " does not exist. check and re-run script")))
 }
 
 #add plateTag
@@ -55,27 +47,36 @@ rda_fileList <- rda_fileList[grepl(".rda", rda_fileList, ignore.case = T)]
 rda_fileList <- rda_fileList[!grepl("archive", rda_fileList)]
 
 #display rda for assessment
-dlg_message(paste0("To remove any .rda from procesing workflow move them to a sub-folder tagged `archive`. The following .rda are currently selected for QC........ |  ~/", 
-                   paste0(rda_fileList, collapse = " |   ~/"),
-                   " | "), 
-            type = 'ok')
+#message/print process!!!!######
+cat(paste0("The following .rda are currently selected for QC:\n   ~/", 
+            paste0(rda_fileList, collapse = " \n   ~/"),
+            "\n To remove any .rda from procesing workflow move them to a sub-folder tagged `archive`."))
 
 if(length(rda_fileList)>0){
 #load 1st rda 
-  load(paste(skylineR_directory, rda_fileList[1], sep ="/"))
+ load(paste(skylineR_directory, rda_fileList[1], sep ="/"))
+ master_list<-master_list2
+ rm(master_list2)
 } else {
-  print(paste0("no .rda present in ", skylineR_directory))
+  stop(print(paste0("no .rda present in ", skylineR_directory)))
 }
 
+#display rda for assessment
+#message/print process!!!!######
+master_list$project_details$script_log$messages$rda_assesment <- paste0("The following .rda are currently selected for QC:\n   ~/", 
+                                                                        paste0(rda_fileList, collapse = " \n   ~/"),
+                                                                        "\n To remove any .rda from procesing workflow move them to a sub-folder tagged `archive`.")
 #set user
-master_list$project_details$user_name <- dlgInput("set user", master_list$project_details$user_name)$res
+master_list$project_details$user_name <- "ANPC"
 #set project name
-master_list$project_details$project_name <- dlgInput("project", master_list$project_details$project_name)$res
+master_list$project_details$project_name <- master_list$project_details$project_name
 #reset parent directory
 master_list$summary_tables$project_summary$value[which(master_list$summary_tables$project_summary$`Project detail` == "local directory")] <- skylineR_directory
 master_list$project_details$project_dir <- skylineR_directory
 #set github directory to v4
 master_list$project_details$github_master_dir <- "https://raw.githubusercontent.com/lukewhiley/targeted_lipid_exploreR/refs/heads/main/v4/"
+#set lipid method version list for later use
+master_list$project_details$plate_method_versions[[master_list$project_details$plateID]] <- master_list$project_details$is_ver
 
 #reassign master_list[1] and remove original master_list object
 masterListBatch <- master_list; rm(master_list)
@@ -87,9 +88,15 @@ if(length(rda_fileList) > 1){
     
     #load loop .rda
     load(paste(skylineR_directory, idx_rda, sep ="/"))
+    master_list <- master_list2; rm(master_list2)
     
     #combine mzml
     for(idx_mzml in names(master_list$data$mzR)){masterListBatch$data$mzR[[idx_mzml]] <- master_list$data$mzR[[idx_mzml]]}
+    
+    #combine lipid version list
+    masterListBatch$project_details$plate_method_versions[[idx_mzml]] <- c(
+      masterListBatch$project_details$plate_method_versions[[idx_mzml]],
+      master_list$project_details$is_ver)
     
     #combine plate list
     masterListBatch$project_details$mzml_plate_list <- c(
@@ -123,8 +130,9 @@ master_list$project_details$plateID <- "all"
 master_list$project_details$project_dir <- skylineR_directory
 
 #set version of lipidExploreR used
-master_list$project_details$lipidExploreR_version <- "5.0"
-master_list$project_details$qcCheckR_version <- "5.0"
+master_list$project_details$lipidExploreR_version <- "6.0"
+master_list$project_details$qcCheckR_version <- "6.0"
+master_list$project_details$script_log$timestamps$start_time <- start_time;rm(start_time)
 master_list$summary_tables$project_summary$value[which(master_list$summary_tables$project_summary$`Project detail` == "lipidExploreR version")] <- "4.0"
 master_list$summary_tables$area_project_summary$value[which(master_list$summary_tables$area_project_summary$`Project detail` == "lipidExploreR version")] <- "4.0"
 
@@ -180,9 +188,17 @@ master_list$templates <- list()
     show_col_types = FALSE) %>% 
     clean_names()
 
+  ##4. source packages----
+  #update_script_log
+  ###Change to github repo!!!!! ----
+  master_list$environment$user_functions$update_script_log <- source(paste0("C:/Users/Hszem/OneDrive - Murdoch University/Masters THESIS/Documents/GitHub/targeted_lipid_exploreR/v6 Automated/functions/FUNC_lipidExploreR_Update_script_log.R"))
+  
+  #update script log
+  master_list <- master_list$environment$user_functions$update_script_log$value(master_list, "project_setup", "start_time", "data_preparation")
+  
 # . ------------------------------------------------------------------------------------------------------------------------------  
 
-# PHASE 1: PREPARE DATA  -----------------
+# PHASE 1: DATA PREPARATION  -----------------
 master_list$data$peakArea <- list()
 ## 1.1. move skyline data and nest under peakArea ------
 master_list$data$peakArea$skylineReport <- master_list$data$skyline_report
@@ -199,10 +215,7 @@ if(tempQCflag == "all"){
   master_list$project_details$mzml_plate_list <- master_list$project_details$mzml_plate_list[!grepl("all", master_list$project_details$mzml_plate_list)]
 }
 
-dlg_message(paste0("subfolders with plates for QC are: | ", paste0(master_list$project_details$mzml_plate_list, collapse = " | "), " | . . . . . if any are incorrect check and re-run script"), "ok")
-
-#set qc-type
-master_list$project_details$qc_type <- dlgInput("which qc type will be used? Default is vltr, if your cohort was run on lipid method v1 please select ltr", "vltr/ltr/pqc ")$res
+cat(paste0("subfolders with plates for QC are: | ", paste0(master_list$project_details$mzml_plate_list, collapse = " | "), " | . . . . . if any are incorrect check and re-run script"))
 
 ## 1.2. transpose data to standard metabolomics structure (features in columns, samples in rows) ---------------------------------------
 master_list$data$peakArea$transposed <- list()
@@ -227,8 +240,6 @@ for(idx_batch in master_list$project_details$mzml_plate_list){
            as.numeric) %>% 
     as_tibble()
 }
-
-
 ## 1.3. Sort by run order and add annotation data ------------------------------- 
 #list for storing concentration data area_sorted by run order
 master_list$project_details$run_orders <- list()
@@ -246,17 +257,13 @@ for (idx_batch in names(master_list$data$peakArea$transposed)){
     add_column(sample_timestamp = temp_timestamp) %>%
     arrange(sample_timestamp)
   
-  
   #create metadata columns
   master_list$project_details$run_orders[[idx_batch]]$sample_batch <- sub("(_SER|_PLA).*", "", master_list$project_details$run_orders[[idx_batch]]$sample_name)# cohort name
   master_list$project_details$run_orders[[idx_batch]]$sample_plate_id <- idx_batch #plate_id
   master_list$project_details$run_orders[[idx_batch]]$sample_plate_order <- c(1:nrow(master_list$project_details$run_orders[[idx_batch]])) #sample_plate_order
   master_list$project_details$run_orders[[idx_batch]]$sample_type <- NA
   master_list$project_details$run_orders[[idx_batch]]$sample_matrix <- ifelse(grepl("(?i)SER", master_list$project_details$run_orders[[idx_batch]]$sample_name), "SER",
-                                                                        ifelse(grepl("(?i)PLA", master_list$project_details$run_orders[[idx_batch]]$sample_name), "PLA", NA))
-  
-  
-  #sample_matrix
+                                                                              ifelse(grepl("(?i)PLA", master_list$project_details$run_orders[[idx_batch]]$sample_name), "PLA", NA))
   
   # set sample_type using mutate
   master_list$project_details$run_orders[[idx_batch]] <- master_list$project_details$run_orders[[idx_batch]]  %>%
@@ -277,7 +284,73 @@ for (idx_batch in names(master_list$data$peakArea$transposed)){
     filter(sample_type == "pqc" | sample_type == "sample" | sample_type == "ltr" | sample_type == "sltr" | sample_type == "vltr") %>%
     arrange(sample_timestamp) %>%
     add_column(sample_run_index = c(1:nrow(.)), .before = 1)
+}
   
+  # Dynamically set qc_type
+#Check logic with luke-----
+  # Flag low number of QCs using ratio of QC to total samples for qc types
+  master_list$project_details$qc_passed <- list()
+  for (idxPlate in names(master_list$data$peakArea$sorted)) {
+    for (qc in c("vltr", "ltr", "pqc")) {
+      plateData <- master_list$data$peakArea$sorted[[idxPlate]]
+      totalSamples <- length(plateData$sample_name)
+      requiredQCs <- 6 / 96 # Minimum of 6 QC for 96 plate
+      qcCount <- length(which(tolower(plateData$sample_type) == tolower(qc)))
+      qcCountRatio <- qcCount / totalSamples
+      if (qcCountRatio < requiredQCs || qcCount < 2) {
+        master_list$project_details$qc_passed[[idxPlate]][[qc]] <- "fail"
+      } else {
+        master_list$project_details$qc_passed[[idxPlate]][[qc]] <- "pass"
+      }
+    }
+  }
+  
+  
+  # Summarise qc assessment pass/fail for all plates in project for qc types in master
+  master_list$project_details$global_qc_pass <- list(vltr = "pass", ltr = "pass", pqc = "pass")
+  for (idxPlate in names(master_list$data$peakArea$sorted)) {
+    for (qc in c("vltr", "ltr", "pqc")) {
+      if (master_list$project_details$qc_passed[[idxPlate]][[tolower(qc)]] == "fail") {
+        master_list$project_details$global_qc_pass[[qc]] <- "fail"
+      }
+    }
+  }
+
+  # Set project qc_type based on qc assesment 
+  master_list$project_details$qc_type <- if (master_list$project_details$global_qc_pass$ltr == "pass") {
+    "ltr"
+  } else if (master_list$project_details$global_qc_pass$vltr == "pass") {
+    "vltr"
+  }  else if (master_list$project_details$global_qc_pass$pqc == "pass") {
+    "pqc"
+  } else {
+    "unknown"
+  }
+  
+  #Stop script and print error if there are no viable QC for QC checker
+  if (master_list$project_details$qc_type == "unknown") {
+    # Capture the structure of the lists as strings
+    global_qc_pass_str <- capture.output(str(master_list$project_details$global_qc_pass))
+    plate_qc_passed_str <- capture.output(str(master_list$project_details$qc_passed))
+    
+    # Create a formatted message
+    error_message <- paste0(
+      "STOPPING SCRIPT \n",
+      "There are no viable ltr, pqc, or vltr to qc in project:", master_list$project_details$project_name, ".\n",
+      "Please refer to the details below:\n",
+      "Global QC Assessment: ", paste(global_qc_pass_str, collapse = "\n"), "\n",
+      "Plate QC Assessment: ", paste(plate_qc_passed_str, collapse = "\n")
+    )
+    
+    # Stop execution and print the error message
+    stop(error_message)
+  } else{
+    message <- paste("qcCheckeR has set QC to:", master_list$project_details$qc_type)
+  cat(message)
+  }
+  
+  #Resume formatting of master_list$data$peakArea$sorted
+  for (idx_batch in names(master_list$data$peakArea$transposed)){
   #add_factor column for plotting
   master_list$data$peakArea$sorted[[idx_batch]] <- master_list$data$peakArea$sorted[[idx_batch]] %>%
     add_column(sample_type_factor = master_list$data$peakArea$sorted[[idx_batch]]$sample_type %>% 
@@ -295,13 +368,14 @@ for (idx_batch in names(master_list$data$peakArea$transposed)){
   #convert sample type to "qc" for selected qc type and "sample" for everything else
   master_list$data$peakArea$sorted[[idx_batch]][["sample_type"]][-which(tolower(master_list$project_details$qc_type) == tolower(master_list$data$peakArea$sorted[[idx_batch]][["sample_type"]]))] <- "sample"
   master_list$data$peakArea$sorted[[idx_batch]][["sample_type"]][which(tolower(master_list$project_details$qc_type) == tolower(master_list$data$peakArea$sorted[[idx_batch]][["sample_type"]]))] <- "qc"
-
+  
   #add sample_data_source column
   master_list$data$peakArea$sorted[[idx_batch]] <- master_list$data$peakArea$sorted[[idx_batch]] %>%
     add_column(sample_data_source = ".peakArea",
                .after = "sample_type_factor_rev")
-
+  
 }
+
 
 #add a global runorder based on mzML sample timestamp
 tempAllSamples <- master_list$data$peakArea$sorted %>%
@@ -380,46 +454,7 @@ batches <- unique(names(master_list$data$peakArea$imputed))
 # For loop for SIL template version control by plate
 for(idx_batch in batches){
   
-  # Set template version for SIL_guide and conc_guide
-  batch_timestamp <- master_list$data$peakArea$imputed[[idx_batch]][["sample_timestamp"]] %>%
-    str_sub(., 1, 4) %>%
-    unique() %>%
-    as.numeric()
-  
-  # Secondary check on SIL naming conventions
-  internal_standard_df <- master_list$data$peakArea$imputed[[idx_batch]][grepl("SIL", colnames(master_list$data$peakArea$imputed[[idx_batch]]))]
-  
-  # Flagging Internal Standards
-  internal_standard_flag <- ifelse(grepl("Lipidyzer|SPLASH", colnames(internal_standard_df)), 0, 1)
-  
-  unique_flag <- unique(internal_standard_flag)
-  
-  # Determine Internal Standard Type
-  internal_standard_type <- if (length(unique_flag) == 1) {
-    unique_flag
-  } else {
-    flag_1 <- sum(internal_standard_flag == 1)
-    flag_0 <- sum(internal_standard_flag == 0)
-    if (flag_0 > flag_1) 0 else 1
-  }
-  
-  
-  # Logic for template selection
-  template_version <- if(batch_timestamp < 2023 & internal_standard_type == 0){ 
-    "v1"
-  } else if(batch_timestamp >= 2023 & batch_timestamp < 2025 & internal_standard_type == 1){
-    "v2"
-  } else if(batch_timestamp >= 2025 & internal_standard_type == 1){
-    "v4"
-  }
-  
-  # Prompt user for SIL version and allow for override per plate
-  # master_list$project_details$is_ver <- dlgInput(paste0(
-  #   "Plate = ", idx_batch,
-  #   " based on the mzml timestamp of your project ", batch_timestamp,
-  #   " lipidExploreR suggests you use SIL internal standard version ", template_version, 
-  #   ". Please select which version to use (v1 = 6500, pre-2023, v2 = 6500, post-2023, v3 = 7500 (matched to v2), v4 = 7500 updated, 2025)"
-  # ), default = template_version)$res
+  template_version <- master_list$project_details$plate_method_versions[[idx_batch]]
   
   master_list$project_details$is_ver <- template_version
   master_list[["templates"]][["Plate SIL version"]][[idx_batch]] <- template_version
@@ -565,8 +600,43 @@ if(!dir.exists(paste0(skylineR_directory, "/html_report"))){
   dir.create(paste0(skylineR_directory, "/html_report"))
 }
 
-#set qc-type
-master_list$project_details$statTarget_qc_type <- dlgInput("which qc type will be used for statTarget? Default is vltr, if your cohort was run on lipid method v1 please select ltr", "vltr/ltr/pqc ")$res
+
+#check logic with luke ----
+#set qc for statTarget
+master_list$project_details$statTarget_qc_type <- master_list$project_details$qc_type
+
+# #dynamic set qc-type for stattarget
+# master_list$project_details$statTarget_qc_type <- if (master_list$project_details$global_qc_pass$ltr == "pass") {
+#   "ltr"
+# } else if (master_list$project_details$global_qc_pass$vltr == "pass") {
+#   "vltr"
+# }  else if (master_list$project_details$global_qc_pass$pqc == "pass") {
+#   "pqc"
+# } else {
+#   "unknown"
+# }
+# 
+# #Stop script and print error if there are no viable QC
+# if (master_list$project_details$statTarget_qc_type == "unknown") {
+#   # Capture the structure of the lists as strings
+#   global_qc_pass_str <- capture.output(str(master_list$project_details$global_qc_pass))
+#   plate_qc_passed_str <- capture.output(str(master_list$project_details$qc_passed))
+#   
+#   # Create a formatted message
+#   error_message <- paste0(
+#     "STOPPING SCRIPT \n",
+#     "There are no viable ltr, pqc, or vltr for statTarget:", master_list$project_details$project_name, ".\n",
+#     "Please refer to the details below:\n",
+#     "Global QC Assessment: ", paste(global_qc_pass_str, collapse = "\n"), "\n",
+#     "Plate QC Assessment: ", paste(plate_qc_passed_str, collapse = "\n")
+#   )
+#   
+#   # Stop execution and print the error message
+#   stop(error_message)
+# } else{
+#   message <- paste("qcCheckeR has set stattarget QC to:", master_list$project_details$statTarget_qc_type)
+#   cat(message)
+# }
 
 
 #create data list 
@@ -582,9 +652,8 @@ if(!dir.exists(paste0(FUNC_list$project_dir,"/", Sys.Date(), "_signal_correction
 
 setwd(paste0(FUNC_list$project_dir,"/", Sys.Date(), "_signal_correction_results")) 
 
-#apply on concentration data (post-impute)
 #set master data for function
-FUNC_list$master_data <- bind_rows(master_list$data$concentration$imputed)
+FUNC_list$master_data <- bind_rows(master_list$data$concentration$imputed)#apply on concentration data (post-impute)
 #set_qc type used for signal drift correction
 FUNC_list$master_data[["sample_type"]] <- "sample"
 FUNC_list$master_data[["sample_type"]][which(tolower(FUNC_list$master_data[["sample_type_factor"]]) == tolower(master_list$project_details$statTarget_qc_type))] <- "qc"
@@ -602,24 +671,6 @@ temp.qcFail <- (FUNC_list$master_data  %>%
 
 #reset failed QC injections to "sample" so is not included in statTarget algorithm
 FUNC_list$master_data[["sample_type"]][which(FUNC_list$master_data[["sample_name"]] %in% temp.qcFail)] <- "sample"
-
-
-#flag low number of QCs using ratio of QC to total samples
-for(idxPlate in names(master_list$data$concentration$imputed)){
-  
-  plateData <- FUNC_list$master_data %>% filter(sample_plate_id == idxPlate)
-  totalSamples <- length(plateData %>% .$sample_type_factor)
-  requiredQCs <- (6/96) # Minimum of 6 QC for 96 samples
-  qcCount <- length(which(tolower(plateData$sample_type) == "qc"))
-  qcCountRatio <- (qcCount/totalSamples)
-  dlg_message(paste0(idxPlate, " has ", qcCount, " ", master_list$project_details$statTarget_qc_type, "s for use by statTarget"), "ok")
-  
-  if(qcCountRatio < requiredQCs || qcCount < 2){
-    dlg_message(paste0("You do not have enough QCs for statTarget on plate ",idxPlate,". Stopping qcCheckeR. Please remove plate ",idxPlate," and re-run chunk."), type = 'ok')
-    FUNC_list$corrected_data$data <- NULL
-  }
-}
-
 
 #exclude failed qcs (see chunk above to id failed QCs)
 FUNC_list$master_data[["sample_type"]]
@@ -793,7 +844,7 @@ statTarget::shiftCor(samPeno = samPeno,
                      ntree = 500,
                      MLmethod = 'QCRFSC',
                      imputeM = "minHalf",
-                     plot = TRUE,
+                     plot = FALSE,
                      coCV = 10000
 )
 
@@ -912,7 +963,8 @@ setwd(master_list$project_details$project_dir)
 #remove extra files
 rm(list = c(ls()[which(ls() != "master_list")]))
 
-# data is now prepared for data preProcessing
+# Update script_log
+master_list$environment$user_functions$update_script_log$value(master_list, "data_preparation", "project_setup", "data_filtering")
 
 #.-----------
 
@@ -922,12 +974,43 @@ rm(list = c(ls()[which(ls() != "master_list")]))
 # Once failed samples have been identified - the filtering then identifies lipids that have >50% missing values
 # note: missing also refers to <limit of detection [<LOD]. This refers to instances of peak areas that are <5000 counts, as skyline will sometimes integrate noise giving a small value.
 
-master_list$project_details$qc_type <- dlgInput("qc type for preProcessing/filtering  [NOTE: use pqc if one is available. Otherwise use ltr]", "pqc/ltr")$res
+#Dynamically set QC for filtering 
+#Check logic with luke ----
+#dynamic set qc-type for filtering
+master_list$project_details$qc_type  <- if (master_list$project_details$global_qc_pass$pqc == "pass") {
+  "pqc"
+} else if (master_list$project_details$global_qc_pass$ltr == "pass") {
+  "ltr"
+} else {
+  "unknown"
+}
+
+#Stop script and print error if there are no viable QC
+if (master_list$project_details$qc_type  == "unknown") {
+  # Capture the structure of the lists as strings
+  global_qc_pass_str <- capture.output(str(master_list$project_details$global_qc_pass))
+  plate_qc_passed_str <- capture.output(str(master_list$project_details$qc_passed))
+
+  # Create a formatted message
+  error_message <- paste0(
+    "STOPPING SCRIPT \n",
+    "There are no viable ltr, pqc, or vltr for RSD filtering:", master_list$project_details$project_name, ".\n",
+    "Please refer to the details below:\n",
+    "Global QC Assessment: ", paste(global_qc_pass_str, collapse = "\n"), "\n",
+    "Plate QC Assessment: ", paste(plate_qc_passed_str, collapse = "\n")
+  )
+
+  # Stop execution and print the error message
+  stop(error_message)
+} else{
+  message <- paste("qcCheckeR has set filtering QC to:", master_list$project_details$qc_type)
+  cat(message)
+}
 
 master_list$filters <- list()
 
 ## 2.1. sample filter flags [missing value and summed signal] -------
-master_list$project_details$mv_sample_threshold <- dlgInput("set missing value threshold % for sample flagging. e.g. exclude sample if it has > x% missing lipids. 50 is default", "50")$res %>% as.numeric()
+master_list$project_details$mv_sample_threshold <- "50" %>% as.numeric()
 #For loop generates sample filter flags by plate
 for (idx_batch in names(master_list$data$peakArea$sorted)){
 master_list$filters$samples.missingValues[[idx_batch]] <- list()
@@ -1451,12 +1534,13 @@ master_list$filters$rsd <- master_list$filters$rsd %>%
   mutate(across(!contains("data"), as.numeric)) %>%
   mutate(across(!contains("data"), round, 2))
 
-
+# Update script_log
+master_list$environment$user_functions$update_script_log$value(master_list, "data_filtering", "data_preparation", "summary_report")
 
 #. ------------------------------------------------------------------------------------------------------------------------------------------------
 # PHASE 3. SUMMARY REPORT ------------------------ 
 ## 3.1. dataSetSummary -----
-metric =  c("Cohorts", "totalSamples", "studySamples", "ltrSamples", "vltrSamples", "sltrSamples", "pqcSamples", 
+metric =  c("Cohorts","MatrixType", "totalSamples", "studySamples", "ltrSamples", "vltrSamples", "sltrSamples", "pqcSamples", 
             "lipidTargets", "SIL.version","SIL.IntStds", 
             "missingValueFilterFlags[samples]", "missingValueFilterFlags[SIL.IS]", "missingValueFilterFlags[lipidTargets]", 
             "rsd<30%[peakArea]", "rsd<20%[peakArea]", "rsd<10%[peakArea]",
@@ -1474,6 +1558,7 @@ for(idx_batch in names(master_list$data$peakArea$sorted)){
     master_list$summary_tables$projectOverview,
     rbind(
       c("Cohorts", paste0(unique(master_list$data$peakArea$sorted[[idx_batch]]$sample_batch), collapse = ",")),
+      c("MatrixType", unique(master_list$data$peakArea$sorted[[idx_batch]]$sample_matrix)),
       c("totalSamples", nrow(master_list$data$peakArea$sorted[[idx_batch]])),
       c("studySamples", nrow(master_list$data$peakArea$sorted[[idx_batch]] %>% filter(sample_type_factor == "sample"))),
       c("ltrSamples", nrow(master_list$data$peakArea$sorted[[idx_batch]] %>% filter(sample_type_factor == "ltr"))),
@@ -1510,6 +1595,7 @@ master_list$summary_tables$projectOverview <- left_join(
   master_list$summary_tables$projectOverview,
   rbind(
     c("Cohorts", length(unique(master_list$filters$samples.missingValues$sample_batch))),
+    c("MatrixType", paste0(bind_rows(master_list$data$peakArea$sorted)%>% select(contains("sample_matrix")) %>% unique(), collapse = ',')),
     c("totalSamples", nrow(bind_rows(master_list$data$peakArea$sorted))),
     c("studySamples", nrow(bind_rows(master_list$data$peakArea$sorted) %>% filter(sample_type_factor == "sample"))),
     c("ltrSamples", nrow(bind_rows(master_list$data$peakArea$sorted) %>% filter(sample_type_factor == "ltr"))),
@@ -1539,6 +1625,9 @@ master_list$summary_tables$projectOverview <- left_join(
 )
 
 #master_list$summary_tables$projectOverview$allBatches <- master_list$summary_tables$projectOverview$allBatches %>% as.numeric()
+
+# Update script_log
+master_list$environment$user_functions$update_script_log$value(master_list, "summary_report", "data_filtering", "plot_generation")
 
 # . ------------------------------------------------------------------------------------------------------------------------------  
 # PHASE 4: PLOTS ---------------------
@@ -1972,6 +2061,8 @@ for (idx_metabolite in common_control_charts) {
   )
 }
 
+# Update script_log
+master_list$environment$user_functions$update_script_log$value(master_list, "plot_generation", "summary_report", "data_exports")
 
 # . ------------------------------------------------------------------------------------------------------------------------------  
 #PHASE 5: EXPORTS ------------------------------------
@@ -2056,7 +2147,7 @@ openxlsx::write.xlsx(
 
 
 ### 2. render template ----
-rmarkdown::render(input ="C:/Users/Hszem/OneDrive - Murdoch University/Masters THESIS/Documents/GitHub/targeted_lipid_exploreR/v5 Developmental/templates/lipid_exploreR_report_template_v5.R",
+rmarkdown::render(input ="C:/Users/Hszem/OneDrive - Murdoch University/Masters THESIS/Documents/GitHub/targeted_lipid_exploreR/v6 Automated/templates/lipid_exploreR_report_template_v5.R",
                   output_format = "html_document",
                   output_dir = paste0(master_list$project_details$project_dir, "/html_report"),
                   output_file = paste0(master_list$project_details$project_dir, 
@@ -2078,6 +2169,9 @@ browseURL(url = paste0(master_list$project_details$project_dir,
 
 #clean environment
 rm(list = c(ls()[which(ls() != "master_list")]))
+# Update script_log
+invisible(capture.output(master_list$environment$user_functions$update_script_log$value(master_list, "data_exports", "plot_generation", "Script Complete \n\n\n Thank you for choosing Lipid Explore R")))
+
 ### 5.3.a. export rda of master_list ----
 
 save(master_list,
@@ -2089,3 +2183,4 @@ save(master_list,
        master_list$project_details$plateID,
        "_qcCheckeR_v4.rda"))
 
+master_list$environment$user_functions$update_script_log$value(master_list, "data_exports", "plot_generation", "Script Complete \n\n\n Thank you for choosing Lipid Explore R")
