@@ -1,7 +1,7 @@
 #.-----
-#1. Project setup-----
+#Project setup-----
 start_time <- Sys.time()
-#### load packages----
+#### 1. load packages----
 package_list <- c('statTarget', 'svDialogs', 'ggpubr', 'janitor', 'plotly', 'knitr', 'viridisLite', 'mzR', 'httr', 'cowplot', 'matrixStats', 'tidyverse')
 
 for(idx_package in package_list){
@@ -19,7 +19,7 @@ master_list$environment$r_version <- sessionInfo()$R.version$version.string
 master_list$environment$base_packages <- sessionInfo()$basePkgs
 master_list$environment$user_packages <- paste0(names(sessionInfo()$otherPkgs), ": ", paste0(installed.packages()[names(sessionInfo()$otherPkgs), "Version"]))
 
-##set project details----
+##2. set project details----
 #set project directory
 master_list$project_details$project_dir <- paste0("C:/Users/Hszem/OneDrive - Murdoch University/Desktop/Dummy Cohort") # Change to entering from notebook later##############################
 setwd(master_list$project_details$project_dir)
@@ -49,7 +49,7 @@ for (version in versions) {
   )
 }
 
-##source functions----
+##3. source functions----
 #RT finder
 master_list$environment$user_functions$mrm_RT_findeR_mzR <- source(paste0(
   master_list$project_details$github_master_dir , 
@@ -61,7 +61,7 @@ master_list$environment$user_functions$skyline_commandR <- source(paste0("C:/Use
 ###Change to github repo!!!!! ----
 master_list$environment$user_functions$update_script_log <- source(paste0("C:/Users/Hszem/OneDrive - Murdoch University/Masters THESIS/Documents/GitHub/targeted_lipid_exploreR/v6 Automated/functions/FUNC_lipidExploreR_Update_script_log.R"))
 
-##setup project directories----
+##4. setup project directories----
 for (plate_ID in master_list$project_details$plateID){ 
   #plate
   if(!dir.exists(paste0(master_list$project_details$project_dir, "/",plate_ID))){dir.create(paste0(master_list$project_details$project_dir, "/",plate_ID))}
@@ -86,8 +86,8 @@ master_list <- master_list$environment$user_functions$update_script_log$value(ma
 
 #.----
 
-#2. msConvert---- 
-#interact with msConvert through terminalgenerate mzml from wiff files
+# msConvert No-UI Interaction ---- 
+##1. generate mzml from wiff files----
 
 #Construct command for terminal
   # replace all "/" with "\\"
@@ -107,7 +107,7 @@ master_list <- master_list$environment$user_functions$update_script_log$value(ma
   # execute the command
   system(full_command)
 
-##restructure directory----
+##2. restructure directory----
 # move wiff files into correct location of file structure
 temp_path_1 <- list.files(path = file.path(master_list$project_details$project_dir,"/wiff"), pattern = ".wiff$", all.files = FALSE,
                                                                         full.names = TRUE, recursive = FALSE,
@@ -167,7 +167,7 @@ for (plate_ID in master_list$project_details$plateID) {
     
 #.----
   
-#3. import mzml files using mzR ------------------------------------
+# import mzml files using mzR ------------------------------------
 #initialise mzml_filelist
 mzml_filelist <- list()
 #Initialise loop to go over each plate
@@ -214,11 +214,15 @@ for(idx_plate in master_list$project_details$plateID){
   master_list <- master_list$environment$user_functions$update_script_log$value(master_list, "mzR_mzml_import", "ms_convert", "mzml_file_processing")
     
 #.----
-#4. mzml file processing----
+  
+#Skyline No-UI Interaction----- 
+  
+  ##1. mzml file processing----
   #initialise loop per plate 
   for (plate_idx in master_list$project_details$plateID){
   print(paste("Processing plate:",plate_idx))  
-  ## parameters method version control -----
+  
+  ##2. parameters method version control -----
   # Check and set qc_type
   if (any(grepl("LTR", master_list$project_details$mzml_sample_list[[plate_idx]]))) {
     master_list$project_details$qc_type <- "LTR"
@@ -261,7 +265,7 @@ for(idx_plate in master_list$project_details$plateID){
       
       master_list$summary_tables$project_summary <- setNames(master_list$summary_tables$project_summary, c("Project detail", "value"))
       
-    # retention time optimiser----
+    ##3. retention time optimiser----
     #run function
       master_list$templates$mrm_guides$by_plate[[plate_idx]] <- list()
       for (idx in plate_idx) {
@@ -290,9 +294,10 @@ for(idx_plate in master_list$project_details$plateID){
               file = paste0(master_list$project_details$project_dir, "/", plate_idx, "/data/skyline/", Sys.Date(), "_peak_boundary_update_",
                             master_list$project_details$project_name,"_",plate_idx, ".csv"))
     
-   #run skyline interface----
+   ##4. skyline command----
     
     #Import blank files into structure
+    # Change to github repo!!!!! -----
       ##Blank .sky file
       file.copy(from = paste0("C:/Users/Hszem/OneDrive - Murdoch University/Masters THESIS/Documents/GitHub/targeted_lipid_exploreR/v6 Automated/templates/default_skyline_file.sky"),
                 to = paste0(master_list$project_details$project_dir,"/",plate_idx, "/data/skyline" ))
@@ -383,7 +388,7 @@ for(idx_plate in master_list$project_details$plateID){
     master_list2$data$skyline_report <- data.frame()
     master_list2$data$skyline_report <- master_list$data$skyline_report[[plate_idx]]
     
-    #export .rda for individual plate
+    ##5. export .rda for individual plate----
     save(master_list2, file = paste0(
       master_list$project_details$project_dir, "/", plate_idx,"/data/rda/",
       Sys.Date(), "_", master_list$project_details$user_name, "_", master_list$project_details$project_name, "_", plate_idx,
